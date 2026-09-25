@@ -3,7 +3,7 @@
   dev-flow ハーネスを対象プロジェクトに導入する。
 
 .DESCRIPTION
-  コピーするもの: .claude/skills/dev-flow、.claude/agents の 3 エージェント、.claude/hooks、scripts/devflow-*
+  コピーするもの: .claude/skills/dev-flow、.claude/agents の 4 エージェント、.claude/hooks、scripts/devflow-*
   .claude/settings.json は、既存のものがあればフックを追記し、statusLine は未設定のときだけ設定する。
   .gitignore に dev-flow の一時ファイルを追記する。
 
@@ -27,6 +27,8 @@ function Copy-Item2([string]$Rel) {
     $to = Join-Path $dst $Rel
     if ((Test-Path -LiteralPath $to) -and -not $Force) { Write-Output "skip (既存): $Rel"; return }
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $to) | Out-Null
+    # ディレクトリを既存の上へ Copy-Item すると中に入れ子で複製されるため、先に消してから置き換える (古いファイルも残さない)
+    if ((Test-Path -LiteralPath $to -PathType Container)) { Remove-Item -LiteralPath $to -Recurse -Force }
     Copy-Item -LiteralPath $from -Destination $to -Recurse -Force
     Write-Output "copy: $Rel"
 }
@@ -47,7 +49,8 @@ if (Test-Path -LiteralPath $settingsPath) {
     $theirs = Get-Content -LiteralPath $settingsPath -Raw | ConvertFrom-Json -AsHashtable
     if (-not $theirs.Contains('hooks')) { $theirs['hooks'] = [ordered]@{} }
     foreach ($ev in $ours.hooks.Keys) {
-        $existing = if ($theirs.hooks.Contains($ev)) { @($theirs.hooks[$ev]) } else { @() }
+        # if 式の出力は 1 要素の配列を展開してしまうため、外側を @() で包んで常に配列にする
+        $existing = @(if ($theirs.hooks.Contains($ev)) { $theirs.hooks[$ev] })
         $json = ($existing | ConvertTo-Json -Depth 10)
         foreach ($entry in $ours.hooks[$ev]) {
             $script = [string]$entry.hooks[0].args[-1]
