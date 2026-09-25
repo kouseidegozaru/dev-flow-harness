@@ -70,8 +70,16 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
         exit 2
     }
 
-    $before = Get-Fingerprint
     $n = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'devflow-state.ps1') session
+    # 状態ファイル (セッション数の更新、中断されたセッションの残り) を先にコミットし、
+    # 次のセッションの test/feat コミットに混ざらないようにする
+    $book = @('.devflow/state.json', '.devflow/handoff.md', '.devflow/blocked.md', 'docs/04-detailed-design/tasks/index.md') |
+        Where-Object { Test-Path -LiteralPath (Join-DevflowPath $root $_) }
+    if (@(& git status --porcelain -- @book).Count -gt 0) {
+        & git add -- @book
+        & git commit -q -m "chore(loop): セッション $n 開始時の状態を記録" -- @book | Out-Null
+    }
+    $before = Get-Fingerprint
     $impl = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'devflow-state.ps1') impl-status | ConvertFrom-Json
     Write-Log "セッション $n 開始 (反復 $i/$MaxIterations, phase=$($state.phase), タスク done=$($impl.counts.done) blocked=$($impl.counts.blocked) 全体=$($impl.total))"
 
