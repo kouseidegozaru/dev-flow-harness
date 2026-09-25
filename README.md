@@ -127,6 +127,7 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
       interview-rules.md      # 対話フェーズ共通の詰め方
       doc-structure.md        # 設計ドキュメントの分割ルール
       traceability.md         # ID の書式・粒度・検証方法・テストへの埋め込み・trace の検査項目
+      design-guidelines.md    # 画面デザインの指針 (余白・文字・色・部品・状態・避けること・仕上げの確認)
       templates/              # 各成果物のテンプレート (28 種)
   agents/
     design-reviewer.md        # 詳細設計を実装者目線でレビュー
@@ -207,7 +208,7 @@ scripts/
 | 自動 compact | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (1〜100、下げる方向のみ)、`DISABLE_AUTO_COMPACT` | 自動ループで安全網として 70 を設定する。切り替えは compact ではなくセッションの作り直しで行う (クリーンな状態から handoff で再開するため) |
 | ヘッドレス | `claude -p`、`--output-format json` (結果に `session_id`・`total_cost_usd`・`num_turns`・`is_error`・`result`)、`--permission-mode` (`default`/`acceptEdits`/`plan`/`auto`/`dontAsk`/`bypassPermissions`)、`--resume`。`--bare` でなければ、プロジェクトのフック・スキル・エージェントを読み込む | `devflow-implement` が `claude -p "/dev-flow auto" --output-format json` を繰り返し起動する |
 | サブエージェント | `.claude/agents/<name>.md` (frontmatter: `name`・`description`・`tools`・`model` など)。Agent ツールで起動する。`-p` では fork モードが無効。`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` で常に前面実行になる | 自動ループではこの環境変数を設定し、実装担当の完了を待ってから次に進むようにする |
-| 画面デザイン | (当初は Claude Design を Artifact ツールの Design 型で操作する方式で作り、動作も確認した。トークン消費が大きく、成果物が claude.ai 上に置かれるため取りやめた) | `screen-designer` サブエージェント (メイン会話と同じモデル) がローカルに HTML などを書き出す (構成は自由)。修正は文章で指示し、ブラウザで入口の `designs/index.html` や各ファイルを開いて確認する |
+| 画面デザイン | (当初は Claude Design を Artifact ツールの Design 型で操作する方式で作り、動作も確認した。トークン消費が大きく、成果物が claude.ai 上に置かれるため取りやめた) | `screen-designer` サブエージェント (メイン会話と同じモデル) がローカルに HTML などを書き出す (構成は自由)。デザインの質は `references/design-guidelines.md` (デザイン指針と仕上げの確認項目) で担保する。修正は文章で指示し、ブラウザで入口の `designs/index.html` や各ファイルを開いて確認する |
 | フックの実行シェル | Windows の既定は Git Bash。`args` を指定すると exec 形式 (シェルを介さない) になり、`${CLAUDE_PROJECT_DIR}` が引数ごとに展開される | `"command": "pwsh", "args": ["-NoProfile","-File","${CLAUDE_PROJECT_DIR}/.claude/hooks/x.ps1"]` の形にして、OS やシェルに依存しないようにした |
 
 ### 実現できなかった点と代替案

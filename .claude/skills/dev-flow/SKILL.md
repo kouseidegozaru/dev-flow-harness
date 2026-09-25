@@ -54,6 +54,7 @@ implementation / verification なのに対話セッションで呼ばれた場�
   - [references/interview-rules.md](references/interview-rules.md) — 対話フェーズの詰め方 (01〜03 で必ず読む)
   - [references/doc-structure.md](references/doc-structure.md) — 設計ドキュメントの分割ルール (02〜04 で必ず読む)
   - [references/traceability.md](references/traceability.md) — ID の書式・粒度・検証方法・テストへの埋め込み (02〜06 で必ず読む)
+  - [references/design-guidelines.md](references/design-guidelines.md) — 画面デザインの指針 (screen-designer が読む)
   - `references/templates/` — 各成果物のテンプレート
 - 状態の変更 (フェーズ・タスクの状態) は必ず `scripts/devflow-state.ps1` で行い、state.json や tasks/index.md の状態欄を手で書き換えない
 - ID の網羅性は必ず `scripts/devflow-trace.ps1` で確かめる。目視の確認で代えない
