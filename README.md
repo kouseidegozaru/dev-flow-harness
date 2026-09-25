@@ -180,8 +180,9 @@ scripts/
 |------|--------|------|
 | `contextWindowTokens` | 200000 | 使用率の分母。1M コンテキストのモデルでも、品質のため 200000 のままを推奨 |
 | `contextThresholdPercent` | 50 | この使用率を超えたらセッションを切り替える |
+| `minSessionWorkTokens` | 40000 | セッション開始時の使用量からこのトークン数以上進むまでは、閾値を超えても切り替えない (起動直後の固定分が閾値に近い環境で、何も進めずに引き継ぎだけを繰り返すのを防ぐ)。`autoCompactPercent` - 5 に達したら作業量にかかわらず切り替える |
+| `maxNoProgress` | 2 | 進捗のないセッションがこの回数続いたら停止 (引き継ぎメモ・セッション数だけの変更は進捗とみなさない) |
 | `maxIterations` | 40 | 自動ループの最大セッション数 |
-| `maxNoProgress` | 2 | 進捗のないセッションがこの回数続いたら停止 |
 | `maxVerificationRounds` | 3 | 検証ラウンドの上限 |
 | `maxAttemptsPerTest` | 3 | 同じテストでこの回数失敗したら blocked |
 | `autoCompactPercent` | 70 | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` に渡す値 (閾値より前に自動 compact が走る場合の安全網) |

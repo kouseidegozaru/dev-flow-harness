@@ -17,8 +17,9 @@ $config = Get-DevflowConfig $root
 
 $usage = Get-ContextUsage $root $config $in
 if (-not $usage) { exit 0 }
+Update-LoopBaseTokens $root $usage
 $threshold = [double]$config.contextThresholdPercent
-if ($usage.Percent -lt $threshold) { exit 0 }
+if (-not (Test-ContextOver $root $config $usage)) { exit 0 }
 
 $msg = ('[dev-flow] コンテキスト使用率 {0:N0}% (閾値 {1}%)。新しいタスク・新しい監査には着手しないこと。' -f $usage.Percent, $threshold) +
     '今のタスクがコミット可能な区切りに達したら (または今すぐ中断して)、手順書の「セッションの終え方」に従い、' +

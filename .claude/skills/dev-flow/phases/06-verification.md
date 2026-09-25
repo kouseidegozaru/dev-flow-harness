@@ -46,6 +46,14 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full -AuditPlan
 > 確認すること: (1) 設計に書かれた内容がすべてコードに反映されているか (ID がテスト名にあっても中身が不十分なケースを含む)
 > (2) review 種別の ID が実装されているか (3) 設計と異なる実装がないか。
 
+3〜5 単位ずつまとめて並列に起動し、そのまとまりが終わるたびに:
+
+1. `.devflow/verification-log.md` の「## ラウンド <r>」節に、単位ごとの結果 (UNIT・RESULT・FINDINGS の要約) を追記する
+2. `devflow-commit.ps1 -Kind chore -Scope verification -Message "ラウンド <r> 監査: <単位名の列挙>" -Paths .devflow/verification-log.md` でコミットする
+
+監査の結果は会話の記憶だけに置かない (セッションが切り替わっても、監査済みの単位をやり直さずに済むように)。
+セッションの途中から再開した場合は、verification-log.md の今のラウンドの節を読み、まだ結果のない単位だけを監査する。
+
 ### 4. 漏れの処理
 
 機械チェックと監査の漏れを 1 つの一覧にまとめる。次は **追加タスクにしない** (最終レポートに載せるだけ):

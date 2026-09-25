@@ -85,6 +85,7 @@ function Get-DefaultConfig {
     return [ordered]@{
         contextWindowTokens     = 200000
         contextThresholdPercent = 50
+        minSessionWorkTokens    = 40000
         maxIterations           = 40
         maxNoProgress           = 2
         maxVerificationRounds   = 3
@@ -496,6 +497,36 @@ function Get-ContextUsage([string]$Root, $Config, $HookInput) {
         } catch {}
     }
     return $null
+}
+
+function Test-ContextOver([string]$Root, $Config, $Usage) {
+    # セッションを締めるべきかを判定する。
+    # 閾値だけで判定すると、起動直後の固定分 (スキル・ツール定義・引き継ぎメモ) が閾値に近い環境では
+    # 何も進めないまま引き継ぎだけを繰り返す。そこで、セッション開始時の使用量 (最初に測った値) から
+    # minSessionWorkTokens 以上進んでいることも条件にする。
+    # ただし autoCompactPercent - 5 に達したら (自動 compact の直前)、作業量にかかわらず締める。
+    if (-not $Usage) { return $false }
+    $threshold = [double]$Config.contextThresholdPercent
+    if ($Usage.Percent -lt $threshold) { return $false }
+    $hard = if ($Config.autoCompactPercent) { [double]$Config.autoCompactPercent - 5 } else { 90 }
+    if ($Usage.Percent -ge $hard) { return $true }
+    $minWork = if ($Config.Contains('minSessionWorkTokens')) { [double]$Config.minSessionWorkTokens } else { 0 }
+    $loopPath = Join-DevflowPath $Root '.devflow/loop-session.json'
+    if ($minWork -le 0 -or -not (Test-Path -LiteralPath $loopPath)) { return $true }
+    try { $loop = Read-Utf8 $loopPath | ConvertFrom-Json -AsHashtable } catch { return $true }
+    if (-not $loop.Contains('baseTokens') -or -not $loop.baseTokens) { return $true }
+    return (($Usage.Tokens - [double]$loop.baseTokens) -ge $minWork)
+}
+
+function Update-LoopBaseTokens([string]$Root, $Usage) {
+    # 自動ループのセッションで最初に測った使用量を「開始時の使用量」として記録する (Test-ContextOver が使う)
+    if (-not $Usage) { return }
+    $loopPath = Join-DevflowPath $Root '.devflow/loop-session.json'
+    if (-not (Test-Path -LiteralPath $loopPath)) { return }
+    try { $loop = Read-Utf8 $loopPath | ConvertFrom-Json -AsHashtable } catch { return }
+    if ($loop.Contains('baseTokens') -and $loop.baseTokens) { return }
+    $loop.baseTokens = $Usage.Tokens
+    Write-Utf8 $loopPath (($loop | ConvertTo-Json -Compress) + "`n")
 }
 
 Export-ModuleMember -Function *

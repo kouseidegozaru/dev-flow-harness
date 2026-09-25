@@ -1,6 +1,6 @@
 # Stop フック (自動ループ専用。対話セッションでは何もしない)
 #
-# 1. コンテキスト使用率が閾値以上:
+# 1. コンテキスト使用率が閾値以上 (かつセッション開始時から minSessionWorkTokens 以上進んだ。Test-ContextOver):
 #    handoff.md が今回のセッションで更新済み かつ 作業ツリーがクリーンなら停止を許可。
 #    そうでなければ停止をブロックし、handoff.md の記入とコミットを指示する。
 # 2. 閾値未満で作業が残っている: 停止をブロックし、次にやることを指示する。
@@ -47,7 +47,8 @@ function Block([string]$Reason) {
 
 $usage = Get-ContextUsage $root $config $in
 $threshold = [double]$config.contextThresholdPercent
-$over = ($usage -and $usage.Percent -ge $threshold)
+Update-LoopBaseTokens $root $usage
+$over = Test-ContextOver $root $config $usage
 
 if ($over) {
     $handoff = Join-DevflowPath $root '.devflow/handoff.md'

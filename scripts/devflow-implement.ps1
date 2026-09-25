@@ -40,11 +40,15 @@ $logDir = Join-DevflowPath $root '.devflow/logs'
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 
 function Get-Fingerprint {
-    $parts = @((& git rev-parse HEAD 2>$null))
-    foreach ($rel in '.devflow/state.json', 'docs/04-detailed-design/tasks/index.md') {
-        $p = Join-DevflowPath $root $rel
-        if (Test-Path -LiteralPath $p) { $parts += (Get-FileHash -LiteralPath $p -Algorithm SHA1).Hash }
+    # 進捗の指紋。引き継ぎメモ・セッション数だけが変わったセッションは「進捗なし」とみなすため、
+    # それらの状態ファイルだけを変えたコミットと、state.json の sessions / updatedAt は含めない
+    $parts = @((& git log -1 --format=%H -- . ':(exclude).devflow/handoff.md' ':(exclude).devflow/state.json' 2>$null))
+    $s = Read-DevflowState $root
+    if ($s) {
+        $parts += (@($s.phase) + @($s.completedPhases) + @(($s.verification | ConvertTo-Json -Compress -Depth 5))) -join '|'
     }
+    $p = Join-DevflowPath $root 'docs/04-detailed-design/tasks/index.md'
+    if (Test-Path -LiteralPath $p) { $parts += (Get-FileHash -LiteralPath $p -Algorithm SHA1).Hash }
     return ($parts -join ':')
 }
 
