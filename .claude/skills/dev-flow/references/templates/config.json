@@ -1,0 +1,18 @@
+{
+  "contextWindowTokens": 200000,
+  "contextThresholdPercent": 50,
+  "maxIterations": 40,
+  "maxNoProgress": 2,
+  "maxVerificationRounds": 3,
+  "maxAttemptsPerTest": 3,
+  "autoCompactPercent": 70,
+  "claudeArgs": ["--permission-mode", "bypassPermissions"],
+  "test": {
+    "command": "dotnet test --logger trx",
+    "resultGlobs": ["**/TestResults/*.trx"],
+    "files": ["tests/**"]
+  },
+  "source": {
+    "files": ["src/**"]
+  }
+}

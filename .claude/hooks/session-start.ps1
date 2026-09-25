@@ -1,0 +1,91 @@
+# SessionStart フック
+#
+# - source=clear   : 前フェーズ完了後の /clear。次フェーズの開始指示を注入する
+# - source=startup : 自動ループ (DEVFLOW_AUTOLOOP=1) なら続きから再開する指示を注入する。
+#                    対話セッションなら進行中フェーズを知らせる
+# - source=compact : 手順書と決定ツリーの再読を指示する
+# - source=resume  : 会話がそのまま残るので何もしない
+
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot '../../scripts/devflow-lib.psm1') -Force
+
+$in = Read-StdinJson
+$root = Get-DevflowRoot
+$state = Read-DevflowState $root
+if (-not $state) { exit 0 }
+
+$source = if ($in -and $in.PSObject.Properties['source']) { [string]$in.source } else { 'startup' }
+$phase = [string]$state.phase
+$label = Get-PhaseLabel $phase
+$phaseFile = Get-PhaseFile $phase
+$autoloop = ($env:DEVFLOW_AUTOLOOP -eq '1')
+$interactivePhases = @('vision', 'requirements', 'basic-design', 'detailed-design')
+
+function Out-Context([string]$Text) {
+    Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $Text } }
+    exit 0
+}
+
+if ($autoloop) {
+    # 自動ループのセッション開始時刻を記録 (Stop フックが handoff.md の更新有無を判定するのに使う)
+    $sid = if ($in -and $in.PSObject.Properties['session_id']) { [string]$in.session_id } else { '' }
+    $loop = [ordered]@{ sessionId = $sid; startedAt = (Get-Date).ToString('o'); blocks = 0; lastFingerprint = '' }
+    Write-Utf8 (Join-DevflowPath $root '.devflow/loop-session.json') (($loop | ConvertTo-Json -Compress) + "`n")
+
+    $handoffPath = Join-DevflowPath $root '.devflow/handoff.md'
+    $handoff = if (Test-Path -LiteralPath $handoffPath) { Read-Utf8 $handoffPath } else { '(なし)' }
+    if ($handoff.Length -gt 6000) { $handoff = $handoff.Substring($handoff.Length - 6000) }
+    $cfg = Get-DevflowConfig $root
+    Out-Context @"
+[dev-flow 自動実行セッション]
+これは scripts/devflow-implement が起動した無人セッションである。ユーザーには一切質問しない。
+現在フェーズ: $phase ($label)。手順書: .claude/skills/dev-flow/phases/$phaseFile
+コンテキスト使用率が $($cfg.contextThresholdPercent)% を超えたら、手順書の「セッションの終え方」に従って handoff.md を書き、コミットして終了する。
+
+前セッションからの引き継ぎ (.devflow/handoff.md):
+$handoff
+"@
+}
+
+switch ($source) {
+    'clear' {
+        if ($interactivePhases -contains $phase) {
+            Out-Context @"
+[dev-flow 自動再開]
+前フェーズが完了し、コンテキストがクリアされた。現在フェーズ: $phase ($label)。
+ユーザーの最初のメッセージが何であっても (「続けて」「ok」、挨拶など)、それを開始の合図とみなし、
+直ちに .claude/skills/dev-flow/SKILL.md を読んで、その手順どおりに $label フェーズを開始すること。
+前フェーズまでの会話内容は参照せず、docs/ の成果物だけを入力とする。
+"@
+        }
+        if ($phase -in @('implementation', 'verification')) {
+            Out-Context @"
+[dev-flow 自動再開]
+詳細設計まで完了した。次は $label フェーズで、これは対話なしの自動ループで実行する。
+ユーザーの最初のメッセージが何であっても、次の案内だけを行うこと (このセッションで実装を始めない):
+- 別のターミナルでプロジェクト直下から ``scripts/devflow-implement.sh`` (または ``pwsh -File scripts/devflow-implement.ps1``) を実行する
+- 進捗は .devflow/logs/ と git log、docs/04-detailed-design/tasks/index.md で確認できる
+- 終了後は docs/verification-report.md を読む
+"@
+        }
+        if ($phase -eq 'done') {
+            Out-Context '[dev-flow] 全フェーズが完了している。ユーザーには docs/verification-report.md の要点 (漏れ・blocked・手動確認項目) を案内すること。'
+        }
+    }
+    'startup' {
+        if ($interactivePhases -contains $phase) {
+            $started = if ($state.phaseStarted) { '途中まで進んでいる' } else { 'まだ始まっていない' }
+            Out-Context "[dev-flow] 開発フローが進行中 (現在フェーズ: $label, $started)。ユーザーが続きを望んだら .claude/skills/dev-flow/SKILL.md に従って再開する。"
+        }
+    }
+    'compact' {
+        if ($interactivePhases -contains $phase) {
+            Out-Context @"
+[dev-flow] コンテキストが圧縮された。圧縮前の会話の記憶に頼らず、次を読み直してから続けること:
+1. .claude/skills/dev-flow/phases/$phaseFile (手順書)
+2. .devflow/decisions/$phase.md (決定ツリー: 決定済み / 未決定)
+"@
+        }
+    }
+}
+exit 0
