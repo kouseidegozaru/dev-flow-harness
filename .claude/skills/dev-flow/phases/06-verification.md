@@ -6,10 +6,10 @@
 ## 入力
 
 - `.devflow/state.json` (検証ラウンド数)、`.devflow/handoff.md`
-- `scripts/devflow-trace.ps1` の出力、`.devflow/audit-plan.json`
+- `scripts/devflow-trace.ps1` の出力、`scripts/devflow-audit.ps1` の出力 (監査の単位と依頼文)
 - 監査結果 (implementation-auditor サブエージェントの報告)
 
-オーケストレーターは設計ファイルやソースコードを自分で読み込まない。読むのは監査の単位を決める index.md と、スクリプト・サブエージェントの出力だけ。
+オーケストレーターは設計ファイルやソースコードを自分で読み込まない。読むのはスクリプト・サブエージェントの出力と、`.devflow/verification-log.md`・`handoff.md` だけ。
 
 ## 進め方
 
@@ -29,30 +29,41 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full -AuditPlan
 ```
 
 全テストの実行、TODO/スタブの検索、ID の網羅性をまとめて検査し、`docs/traceability.md`、`.devflow/trace-result.json`、
-`.devflow/audit-plan.json` (監査の単位) を書き出す。出力された漏れを控えておく。
+`.devflow/audit-plan.json` (監査の単位) を書き出す。
 
 ### 3. 監査
 
-`.devflow/audit-plan.json` の `units` の各単位 (設計のまとまり: 画面、API リソース、モジュールなど) ごとに
-`implementation-auditor` サブエージェントを起動する (互いに独立なので並列でよい)。
+監査の単位 (設計のまとまり: 画面、API リソース、モジュールなど) の一覧と依頼文は `scripts/devflow-audit.ps1` で得る。
+**`.devflow/audit-plan.json` と `trace-result.json` を Read しない** (大きく、コンテキストを大量に使う)。
+機械チェックの漏れも、オーケストレーターが自分でコードやテストを読んで調べない。その ID を含む単位の監査担当に原因を調べさせる
+(`prompt` の出力に機械チェックの漏れが入る)。
 
-- ラウンド 1: 全単位を監査する
-- ラウンド 2 以降: 前ラウンドで追加したタスクの担当 ID を含む単位、および前ラウンドの監査で漏れが出た単位だけを監査する
+```bash
+pwsh -NoProfile -File scripts/devflow-audit.ps1 list            # 単位ごとに 未監査 / 監査済 / 対象外 と機械チェックの漏れを表示
+pwsh -NoProfile -File scripts/devflow-audit.ps1 prompt <unit>   # その単位の implementation-auditor への依頼文
+```
 
-各起動に渡すのは、その単位の `designFiles`・`upstreamFiles`・`codeFiles`・`testFiles` のパスと `ids` だけ。依頼文:
+- ラウンド 1: 全単位が対象
+- ラウンド 2 以降: 前ラウンドで追加したタスクを含む単位、前ラウンドで NG だった単位、機械チェックの漏れがある単位だけが対象 (`list` が判定する)
 
-> 次の設計ファイルとコードだけを読み、設計がコードに漏れなく正しく反映されているか監査せよ。
-> 設計: <designFiles> / 上流: <upstreamFiles> / コード: <codeFiles> / テスト: <testFiles> / 対象 ID: <ids (検証方法付き)>
-> 確認すること: (1) 設計に書かれた内容がすべてコードに反映されているか (ID がテスト名にあっても中身が不十分なケースを含む)
-> (2) review 種別の ID が実装されているか (3) 設計と異なる実装がないか。
+`list` で「未監査」の単位を 3〜5 個ずつ選び、それぞれ `prompt <unit>` の出力を **そのまま** 依頼文にして
+`implementation-auditor` サブエージェントを並列に起動する。そのまとまりが終わるたびに:
 
-3〜5 単位ずつまとめて並列に起動し、そのまとまりが終わるたびに:
+1. `.devflow/verification-log.md` に、次の形で単位ごとの結果を追記する (`list` はこの見出しで監査済みを判定する):
 
-1. `.devflow/verification-log.md` の「## ラウンド <r>」節に、単位ごとの結果 (UNIT・RESULT・FINDINGS の要約) を追記する
+   ```markdown
+   ## ラウンド <r>
+
+   ### UNIT: <unit (list の 2 列目のまま)>
+   RESULT: OK | NG (<件数>)
+   FINDINGS:
+   - <ID>: <漏れの要約>
+   ```
+
 2. `devflow-commit.ps1 -Kind chore -Scope verification -Message "ラウンド <r> 監査: <単位名の列挙>" -Paths .devflow/verification-log.md` でコミットする
 
 監査の結果は会話の記憶だけに置かない (セッションが切り替わっても、監査済みの単位をやり直さずに済むように)。
-セッションの途中から再開した場合は、verification-log.md の今のラウンドの節を読み、まだ結果のない単位だけを監査する。
+`list` に「未監査」がなくなったら次へ進む。
 
 ### 4. 漏れの処理
 
@@ -65,7 +76,7 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full -AuditPlan
 
 1. 漏れを実装単位にまとめ、追加タスク `TASK-V<ラウンド>-<連番>` を `docs/04-detailed-design/tasks/` に作る
    (`templates/task.md` の形式。担当ID に漏れた ID を入れ、テストケースに「監査で見つかった不足を検出するテスト」を具体的に書く。
-   参照すべき設計ファイルには audit-plan の該当単位の designFiles を入れる)。
+   参照すべき設計ファイルには、該当単位の `devflow-audit.ps1 prompt <unit>` の「設計:」行のファイルを入れる)。
    漏れが設計の不備 (設計どおりでは実装できない) に起因する場合は、タスクにせず blocked 相当の未解決として記録する
 2. `tasks/index.md` に状態 `todo` で追記し、`devflow-state.ps1 add-verification-task <TASK-ID>` で記録する
 3. `devflow-trace.ps1 -Mode design` が exit 0 であることを確かめる (追加タスクの書式の確認)

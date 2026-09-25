@@ -78,8 +78,9 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
 - `claude -p "/dev-flow auto"` を繰り返し起動する。各セッションは state.json と `.devflow/handoff.md` を読んで続きから再開する
 - 各タスクは `tdd-implementer` サブエージェントが TDD で実装し、`scripts/devflow-commit.ps1` でコミットする
   (Red はテストが失敗すること、Green / Refactor は全テストが成功することを、スクリプトが実際にテストを実行して確認する)
-- コンテキスト使用率が閾値 (既定 50%) を超えると、handoff.md を書いてコミットし、セッションを切り替える
+- コンテキスト使用率が閾値 (既定 50%) を超え、かつセッション開始時から一定量 (`minSessionWorkTokens`) 作業していると、handoff.md を書いてコミットし、セッションを切り替える
 - 全タスクが終わると検証フェーズに進み、漏れがあれば追加タスクを作って実装に戻る。漏れゼロ (または残りが blocked のみ) で終了する
+  (監査の単位と監査担当への依頼文は `scripts/devflow-audit.ps1 list` / `prompt <unit>` が出す。監査結果は `.devflow/verification-log.md` にまとまりごとにコミットされる)
 - 終了コード: 0 = 完了 / 2 = フェーズが実装・検証でない / 3 = 進捗なしで停止 / 4 = 最大反復回数に到達
 - ログ: `.devflow/logs/loop.log`、各セッションの JSON 出力 `.devflow/logs/session-NNN.json`
 
