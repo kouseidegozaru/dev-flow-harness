@@ -131,7 +131,7 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
       design-guidelines.md    # 画面デザインの指針 (余白・文字・色・部品・状態・避けること・仕上げの確認)
       templates/              # 各成果物のテンプレート (28 種)
   agents/
-    design-reviewer.md        # 詳細設計を実装者目線でレビュー
+    design-reviewer.md        # 詳細設計のタスクを実装者目線でレビュー (実装者が止まる・誤る点だけ、1 タスク 2 回まで)
     screen-designer.md        # 画面デザインを HTML などで作成・修正 (文章の指示で修正)
     tdd-implementer.md        # 1 タスクを TDD で実装 (review 種別の ID も完了時に自己確認)
   hooks/
