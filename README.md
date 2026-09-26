@@ -242,9 +242,9 @@ scripts/
 |--------|--------|
 | スキル | `.claude/skills/dev-flow/SKILL.md` はルーターだけを持ち、現在フェーズの手順書 (`phases/`) と必要な参照資料だけを読み込ませる |
 | SessionStart フック | `/clear` 後 (source=clear): 次フェーズの開始指示を注入する。実装・検証フェーズでは、そのセッションをオーケストレーターとして開始させる。compact 後: 手順書と決定ツリー (実装・検証なら状態と handoff) を読み直させる。起動時: 進行中のフェーズを知らせる |
-| Stop フック | `devflow-state.ps1 run start` で登録したオーケストレーターのセッションでだけ動く。作業が残っていれば `decision: block` で応答を終えさせず、次の実装担当の起動や検証の続きを指示する。同じ状態のまま 3 回止めたら終了を許す |
+| Stop フック | `devflow-state.ps1 run start` で登録したオーケストレーターのセッションでだけ動く。作業が残っていれば `decision: block` で応答を終えさせず、次の実装担当の起動や検証の続きを指示する。同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許す。タスク一覧が読めない (0 件) ときは止めずに終了を許し、人に知らせる |
 | PostToolUse フック | 入力の `agent_type` が `tdd-implementer` のときだけ動く。実装担当の transcript (`<セッションの transcript と同じ場所>/<session_id>/subagents/agent-<agent_id>.jsonl`) の最新の応答の `message.usage` (`input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`) を `contextWindowTokens` で割って使用率とし、閾値超えなら `additionalContext` で引き継ぎを指示する |
 | SubagentStart フック | `tdd-implementer` の起動時に `.devflow/implementer.json` (開始時刻・開始時の使用量) を作る |
-| SubagentStop フック | `tdd-implementer` が終えようとしたとき、閾値未満で実行可能なタスクが残っていれば `decision: block` で次のタスクへ進ませる。閾値超えなら、`handoff.md` が開始後に更新され、作業ツリーがクリーンになるまで終えさせない。同じ状態のまま 3 回止めたら終了を許す |
+| SubagentStop フック | `tdd-implementer` が終えようとしたとき、閾値未満で実行可能なタスクが残っていれば `decision: block` で次のタスクへ進ませる。閾値超えなら、`handoff.md` が開始後に更新され、作業ツリーがクリーンになるまで終えさせない。同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許す |
 | サブエージェント | `design-reviewer` (読み取りのみ)、`screen-designer`、`tdd-implementer`。いずれもメイン会話と同じモデル (`model: inherit`) |
 | フックの起動方法 | `"command": "pwsh", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/<名前>.ps1"]` の exec 形式で、OS やシェルに依存しない |

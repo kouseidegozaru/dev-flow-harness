@@ -20,6 +20,8 @@
 3. `pwsh -NoProfile -File scripts/devflow-state.ps1 impl-status` を実行する
    - `status` が `ready`: 手順 4 へ
    - `complete` または `stuck` (残りが blocked とそれに依存するタスクだけ): 「全タスク処理後」へ
+   - `no-tasks` (tasks/index.md が無いか、ID と状態の列を持つ表が読めない): 実装担当を起動しない。`devflow-state.ps1 run stop` を実行し、
+     「タスク一覧を読めない (docs/04-detailed-design/tasks/index.md を確認し、直したら `/dev-flow` で再開)」とユーザーに報告して止まる
 4. `tdd-implementer` サブエージェントを **前面で** 起動し、終わるまで待つ。依頼文は次の 1 行だけ (タスクの中身を書き足さない):
 
    > 実装フェーズのタスクを進めよ (次のタスク: <impl-status の nextTask>)。

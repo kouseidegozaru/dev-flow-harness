@@ -6,7 +6,8 @@
 # - 実装フェーズで実行可能なタスクがない: 実装フェーズを完了して検証へ進ませる
 # - 検証フェーズ: 手順を最後まで進めさせる
 # - phase が done になったら止めない (残りが blocked だけでも検証へ進み、最終レポートで報告する)
-# 同じ状態のまま 3 回止めた場合 (進捗なし) は終了を許可する。
+# - タスク一覧が読めない (0 件): 止めずに終了を許可し、人に知らせる
+# 同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許可する。
 
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot '../../scripts/devflow-lib.psm1') -Force
@@ -45,6 +46,13 @@ function Block([string]$Reason) {
 
 if ($state.phase -eq 'implementation') {
     $tasks = @(Read-TaskIndex $root $config)
+    if ($tasks.Count -eq 0) {
+        # タスク一覧が読めない: 検証へ進ませると実装ゼロのまま「完了」になるので、止めて人に知らせる
+        $orch.active = $false
+        Write-Utf8 $orchPath (($orch | ConvertTo-Json -Compress) + "`n")
+        Write-HookJson @{ systemMessage = 'dev-flow: tasks/index.md からタスクを読めないため、オーケストレーターを止めます (表を直したら `/dev-flow` で再開できます)' }
+        exit 0
+    }
     if (Get-ReadyTask $tasks) {
         Block '実装フェーズのタスクが残っている。phases/05-implementation.md の手順どおり、次の tdd-implementer を起動すること。ユーザーには質問しない。'
     }
