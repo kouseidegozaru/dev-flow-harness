@@ -128,6 +128,8 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 
 影響の説明と確認のあと、`devflow-state.ps1 set-phase <phase>` で指定フェーズに戻る (検証ラウンド数と追加タスクの記録は初期化される)。成果物は消さず、そのフェーズの手順で更新する。
 やり直したフェーズより後の成果物は古くなるので、以降のフェーズも順に通し直す (`devflow-trace` が不整合を検出する)。
+詳細設計を通し直すとき、内容や参照する設計の節を変えたタスクだけを todo に戻し、変えていない done のタスクは done のまま残す
+(実装済みの分を作り直さないため)。
 
 特定のタスクだけやり直す場合: `pwsh -NoProfile -File scripts/devflow-state.ps1 task TASK-007 todo`
 
