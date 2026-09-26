@@ -20,7 +20,8 @@ model: inherit
 2. `devflow-state.ps1 task <TASK-ID> in_progress`
 3. そのタスクの入力だけを読む (これ以外は原則読まない):
    - タスクファイル `docs/04-detailed-design/tasks/<TASK-ID>.md`
-   - タスクファイルの「参照すべき設計ファイル」に列挙されたファイル
+   - タスクファイルの「参照すべき設計」に挙げられた **節だけ** (見出しを Grep で探し、その節の範囲だけを offset / limit で Read する。
+     節の指定がないときだけファイル全体を読む)
    - `docs/04-detailed-design/conventions.md` (最初のタスクで 1 回読めばよい)
    - 作成・変更するファイルと、それが依存する既存コード
 

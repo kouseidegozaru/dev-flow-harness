@@ -22,7 +22,7 @@ param(
     [ValidateSet('docs', 'design', 'full', 'task')][string]$Mode = 'full',
     [string]$Task = '',
     [switch]$NoRun,          # テストを実行せず、既存の結果ファイルを使う
-    [switch]$UpdateIndexes,  # 各 index.md の自動生成ブロック (ID 一覧) を更新する
+    [switch]$UpdateIndexes,  # 各 index.md と同じ場所の ids.md (ID 一覧) を生成し、index.md に ids.md へのリンクを置く
     [switch]$NoReport        # docs/traceability.md を書き出さない
 )
 
@@ -309,7 +309,8 @@ if ($Mode -eq 'task') {
 }
 
 # ---------------------------------------------------------------------------
-# 5. index.md の自動生成ブロック
+# 5. ID 一覧 (index.md と同じディレクトリの ids.md)
+#    index.md は各フェーズで最初に読まれるため、大きな ID 一覧は ids.md に分けて index.md を小さく保つ
 # ---------------------------------------------------------------------------
 if ($UpdateIndexes) {
     $indexFiles = @($docFiles | Where-Object { [System.IO.Path]::GetFileName($_) -eq 'index.md' -and (Get-Layer $_) -in @('requirement', 'basic', 'detailed') })
@@ -343,20 +344,22 @@ if ($UpdateIndexes) {
         foreach ($s in $subIdx) {
             $sdir = [System.IO.Path]::GetDirectoryName($s).Replace('\', '/')
             $n = @($defs.Values | Where-Object { $_.file -like "$sdir/*" }).Count
-            $srel = [System.IO.Path]::GetRelativePath($dir, $s).Replace('\', '/')
+            $srel = [System.IO.Path]::GetRelativePath($dir, "$sdir/ids.md").Replace('\', '/')
             [void]$sb.AppendLine('')
             [void]$sb.AppendLine("- 下位: [$srel]($srel) ($n 件)")
         }
         [void]$sb.Append('<!-- devflow:ids:end -->')
+        $block = $sb.ToString().Replace("`r`n", "`n")
+        $idsRel = "$dir/ids.md"
+        Write-Utf8 (Join-DevflowPath $root $idsRel) ("# ID 一覧 (自動生成)`n`n> 目次: [index.md](index.md)`n`n" + $block + "`n")
+        # index.md には ids.md へのリンクだけを置く (以前の版で index.md に書いた ID 一覧のブロックは取り除く)
         $full = Join-DevflowPath $root $ix
         $text = Read-Utf8 $full
-        $block = $sb.ToString().Replace("`r`n", "`n")
-        if ($text -match '(?s)<!-- devflow:ids:begin -->.*?<!-- devflow:ids:end -->') {
-            $text = [regex]::Replace($text, '(?s)<!-- devflow:ids:begin -->.*?<!-- devflow:ids:end -->', { param($m) $block })
-        } else {
-            $text = $text.TrimEnd() + "`n`n## ID 一覧 (自動生成)`n`n" + $block + "`n"
-        }
-        Write-Utf8 $full $text
+        $link = '<!-- devflow:ids-link --> ID 一覧 (自動生成): [ids.md](ids.md)'
+        $text = [regex]::Replace($text, '(?s)(\n## ID 一覧 \(自動生成\)\s*\n)?\s*<!-- devflow:ids:begin -->.*?<!-- devflow:ids:end -->\s*', "`n")
+        if ($text -match '<!-- devflow:ids-link -->[^\n]*') { $text = [regex]::Replace($text, '<!-- devflow:ids-link -->[^\n]*', $link) }
+        else { $text = $text.TrimEnd() + "`n`n" + $link }
+        Write-Utf8 $full ($text.TrimEnd() + "`n")
     }
 }
 

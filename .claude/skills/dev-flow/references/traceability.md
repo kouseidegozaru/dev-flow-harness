@@ -48,7 +48,7 @@ ID は **見出し行に `ID` と `検証` の列を持つ Markdown の表** の
 - 1 つの ID は 1 か所でだけ定義する。重複は trace がエラーにする
 - 要件 ID には `上流` は不要。基本設計 ID は要件 ID を、詳細設計 ID は基本設計 ID (または要件 ID) を 1 つ以上書く
 - 表以外の本文や対応表での言及は「参照」として扱われ、存在しない ID ならエラーになる
-- `index.md` の自動生成ブロック (`<!-- devflow:ids:begin -->` 〜 `end`) は trace が書き換えるので手で編集しない
+- `ids.md` (ID 一覧) は trace が生成するので手で編集しない
 
 ## 3. 検証方法
 
@@ -111,7 +111,7 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 | STUB-LEFT | TODO・FIXME・スタブ・未実装例外が残っている | | | ● (source.files) | ● (タスクのファイル) |
 | FILE-MISSING | タスクの「作成・変更するファイル」が存在しない | | | | ● |
 
-`-UpdateIndexes` を付けると、各 `index.md` の ID 一覧 (自動生成ブロック) を更新する。
+`-UpdateIndexes` を付けると、各 `index.md` と同じディレクトリに ID 一覧 `ids.md` を生成し、index.md に ids.md へのリンクを置く。
 `-NoRun` を付けるとテストを実行せず、既存の結果ファイルで判定する。
 
 ## 8. 設定 (.devflow/config.json)

@@ -75,10 +75,12 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 - 見た目の質は [references/design-guidelines.md](.claude/skills/dev-flow/references/design-guidelines.md) (余白・文字・色・部品・状態・避けること・仕上げの確認) で揃える
 - 修正は文章で指示する (例:「一覧の完了行をグレーにして」)。結果は `design-spec.md` の修正履歴に残り、画面仕様にも反映される
 
-### 詳細設計のレビュー
+### 詳細設計のタスクとレビュー
 
-- 各タスクを `design-reviewer` サブエージェントが実装者の目線でレビューする。指摘するのは、実装者が作業を止める、または設計と違う実装をしてしまう点だけ
-- レビューは 1 タスク 2 回まで。残った指摘は、自分で決められるものは設計に書き、上流の決定が必要なものはまとめてユーザーに確認する
+- タスクファイルには、そのタスク固有の内容 (目的・担当ID・参照すべき設計の節・作るファイル・テストケース・完了条件) だけを書き、設計の内容は写さずに節を参照する。
+  実装担当とレビュー担当は、参照された節だけを読む
+- レビューは必要最低限で、**1 回だけ**。同じ設計を参照するタスクのまとまりごとに `design-reviewer` を 1 体起動し、実装者が作業を止める、または設計と違う実装をしてしまう点だけを挙げさせる
+- 指摘は再レビューせずに設計へ反映する。上流の決定が必要なものだけをまとめてユーザーに確認する
 - ID の網羅性 (未割り当て・要件の未被覆・テストケース不足) は `devflow-trace.ps1 -Mode design` で機械的に確かめる
 - テストの実行方法 (`test.command` など) を `.devflow/config.json` に設定する
 
@@ -168,7 +170,7 @@ pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind test -Scope TASK-003 -Mes
       design-guidelines.md    # 画面デザインの指針
       templates/              # 各成果物のテンプレート
   agents/
-    design-reviewer.md        # 詳細設計のタスクを実装者目線でレビュー (実装者が止まる・誤る点だけ、1 タスク 2 回まで)
+    design-reviewer.md        # 詳細設計のタスクのまとまりを実装者目線で 1 回だけレビュー (実装者が止まる・誤る点だけ)
     screen-designer.md        # 画面デザインを HTML などで作成・修正 (文章の指示で修正)
     tdd-implementer.md        # 実装担当: タスクを次々に TDD で実装。閾値超えで handoff を書いて終える
   hooks/
@@ -182,7 +184,7 @@ pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind test -Scope TASK-003 -Mes
 scripts/
   devflow-lib.psm1            # 共通ライブラリ
   devflow-state.ps1           # state.json / tasks/index.md の状態操作 (エージェントに手で書き換えさせない)
-  devflow-trace.ps1 (.sh)     # ID の網羅性検証、traceability.md・index.md の ID 一覧の生成
+  devflow-trace.ps1 (.sh)     # ID の網羅性検証、traceability.md・各層の ID 一覧 (ids.md) の生成
   devflow-commit.ps1          # コミット規約の機械的な強制
   devflow-install.ps1         # 対象プロジェクトへの導入
 .devflow/                     # (対象プロジェクトに作られる)
@@ -202,7 +204,7 @@ scripts/
 | スクリプト | 主なコマンド |
 |------------|--------------|
 | `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase>` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` |
-| `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (index.md の ID 一覧を更新)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
+| `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
 | `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]` |
 
 ## ID とトレーサビリティ
@@ -214,7 +216,7 @@ scripts/
 - 検証方法は `test` (原則。自動テストで確かめる) / `review` (実装担当が実装時に自己確認し、最終レポートで人が確認する) / `manual` (最終レポートに列挙し、人が確認する)
 - テスト名に `[REQ-TODO-001]` の形で ID を入れる。trace は JUnit XML / TRX のテスト結果から ID ごとの成否を判定する
 - `docs/traceability.md` に、要件 → 設計 → タスク → テストの対応表、検出された漏れ、人が確認する項目 (review / manual) が生成される
-- 各層の `index.md` に、その層の ID 一覧が自動生成される
+- 各層の `index.md` と同じ場所に、その層の ID 一覧 `ids.md` が自動生成される (`index.md` は目次と対応表だけにして小さく保つ)
 
 ## 設定 (.devflow/config.json)
 
