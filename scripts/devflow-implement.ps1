@@ -8,6 +8,7 @@
     - state.json の phase が done になった (検証で漏れゼロ、または残りが blocked のみ)  → exit 0
     - 進捗のないセッションが maxNoProgress 回続いた                                   → exit 3
     - maxIterations 回に達した                                                        → exit 4
+    - 利用上限 (claude.ai のセッション上限など) に達した                              → exit 5
     - phase が implementation / verification 以外                                     → exit 2
 
   進捗の判定: git HEAD、state.json、tasks/index.md のいずれかが変化したか。
@@ -106,6 +107,12 @@ for ($i = 1; $i -le $MaxIterations; $i++) {
         $summary = "exit=$code turns=$turns cost=`$$cost :: $($text -replace '\s+', ' ')"
     } catch { $summary = "exit=$code (JSON 出力を解析できません: $out)" }
     Write-Log "セッション $n 終了 $summary"
+
+    # 利用上限に達した場合は、次のセッションを起動しても同じなので直ちに止める
+    if ($code -ne 0 -and $summary -match "(?i)hit your (session|usage|weekly) limit|usage limit|rate limit") {
+        Write-Log '利用上限に達したため停止します。上限がリセットされた後に、同じコマンドをもう一度実行すると続きから再開します'
+        exit 5
+    }
 
     $after = Get-Fingerprint
     if ($after -eq $before) {

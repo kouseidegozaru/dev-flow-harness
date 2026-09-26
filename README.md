@@ -81,7 +81,7 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
 - コンテキスト使用率が閾値 (既定 50%) を超え、かつセッション開始時から一定量 (`minSessionWorkTokens`) 作業していると、handoff.md を書いてコミットし、セッションを切り替える
 - 全タスクが終わると検証フェーズに進み、漏れがあれば追加タスクを作って実装に戻る。漏れゼロ (または残りが blocked のみ) で終了する
   (監査の単位と監査担当への依頼文は `scripts/devflow-audit.ps1 list` / `prompt <unit>` が出す。監査結果は `.devflow/verification-log.md` にまとまりごとにコミットされる)
-- 終了コード: 0 = 完了 / 2 = フェーズが実装・検証でない / 3 = 進捗なしで停止 / 4 = 最大反復回数に到達
+- 終了コード: 0 = 完了 / 2 = フェーズが実装・検証でない / 3 = 進捗なしで停止 / 4 = 最大反復回数に到達 / 5 = 利用上限に到達 (リセット後に再実行すると続きから再開)
 - ログ: `.devflow/logs/loop.log`、各セッションの JSON 出力 `.devflow/logs/session-NNN.json`
 
 **注意:** 既定では `--permission-mode bypassPermissions` で起動する (無人で git・テスト・ファイル編集を行うため)。
