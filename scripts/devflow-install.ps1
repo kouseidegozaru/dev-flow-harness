@@ -20,7 +20,16 @@ try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catc
 $src =(Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 if (-not (Test-Path -LiteralPath $Target)) { New-Item -ItemType Directory -Force -Path $Target | Out-Null }
 $dst = (Resolve-Path -LiteralPath $Target).Path
-if (-not (Test-Path -LiteralPath (Join-Path $dst '.git'))) { Write-Warning "$dst は git リポジトリではありません。dev-flow はコミットを前提にしています (git init を実行してください)" }
+if (-not (Test-Path -LiteralPath (Join-Path $dst '.git'))) {
+    # タスクの完了判定・blocked の取り消し・進捗の判定がすべて git のコミットに依存するため、git でなければ導入しない
+    Write-Error "$dst は git リポジトリではありません。dev-flow はコミットを前提にしています (先に git init を実行してください)"
+    exit 1
+}
+if (-not $Force -and (Test-Path -LiteralPath (Join-Path $dst 'scripts/devflow-lib.psm1'))) {
+    # 一部のファイルだけを上書きすると、古いスクリプトと新しいフックが混在して壊れるため、更新は -Force で丸ごと行う
+    Write-Error "$dst には dev-flow が導入済みです。更新するには -Force を付けて実行してください (ハーネスのファイルをすべて置き換えます)"
+    exit 1
+}
 
 function Copy-Item2([string]$Rel) {
     $from = Join-Path $src $Rel
