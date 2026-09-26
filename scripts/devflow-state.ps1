@@ -182,7 +182,15 @@ switch ($Command) {
             }
             $undoNote = Undo-TaskCommits $Arg1 ([string]$s.implementation.taskBase[$Arg1])
         }
+        $prev = @(Read-TaskIndex $root $config | Where-Object { $_.Id -eq $Arg1 } | ForEach-Object { $_.Status }) | Select-Object -First 1
         Set-TaskIndexStatus $root $config $Arg1 $Arg2
+        if ($prev -eq 'blocked' -and $Arg2 -ne 'blocked') {
+            # blocked の記録は追記のみなので、解除したことも残す (最終レポートに解消済みの blocked を載せないため)
+            $p = Join-DevflowPath $root '.devflow/blocked.md'
+            if (Test-Path -LiteralPath $p) {
+                Write-Utf8 $p ((Read-Utf8 $p) + "`n## $Arg1 解除 ($((Get-Date).ToString('yyyy-MM-dd HH:mm'))) → $Arg2`n")
+            }
+        }
         if ($Arg2 -eq 'in_progress') {
             $s.implementation.currentTask = $Arg1
             if (-not $s.implementation.taskBase[$Arg1]) { $s.implementation.taskBase[$Arg1] = (& git -C $root rev-parse HEAD).Trim() }

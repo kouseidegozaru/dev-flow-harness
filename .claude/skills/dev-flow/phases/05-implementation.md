@@ -40,6 +40,18 @@
 2. `devflow-commit.ps1 -Kind chore -Scope implementation -Message "実装フェーズ完了"`
 3. 続けて [06-verification.md](06-verification.md) を読んで、このセッションで検証フェーズを実行する
 
+## 止まったあとの再開 (人が行う)
+
+オーケストレーターが止まった理由ごとに、原因を直してから `/dev-flow` で再開する (手順 1 からやり直してよい。完了済みのタスクは飛ばされる)。
+原因を直さずに再開すると、同じところで止まる。
+
+| 止まった理由 | 見るもの | 直し方 |
+|--------------|----------|--------|
+| preflight が NG | 出力 | テストのツールを入れる、または `.devflow/config.json` の `test.command` / `test.resultGlobs` を直す |
+| no-tasks | `docs/04-detailed-design/tasks/index.md` | ID と状態の列を持つ表に直す (`devflow-trace -Mode design` が exit 0 になること) |
+| 進捗がないまま実装担当が終わり続けた | `impl-status`、`.devflow/handoff.md`、`.devflow/logs/` のテストのログ | テストの環境 (DB・外部サービス・ポート) を用意する。設計が原因なら `/dev-flow redo detailed-design` |
+| 残りが blocked だけ | `.devflow/blocked.md` の理由と「必要な判断」 | 判断して設計を直し、`devflow-state.ps1 task <ID> todo` で戻す。途中の作業を生かすなら、blocked.md の `git revert <取り消しコミット>` で先に復元する |
+
 ## 実装担当に守らせていること (参考)
 
 詳細は `.claude/agents/tdd-implementer.md`。

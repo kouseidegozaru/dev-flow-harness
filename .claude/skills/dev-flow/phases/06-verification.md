@@ -67,7 +67,7 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 `docs/verification-report.md` を `templates/verification-report.md` の形で書く:
 
 - 全 ID の網羅状況 (`docs/traceability.md` の集計を転記)
-- blocked のまま残ったタスクとその理由 (`.devflow/blocked.md` から)
+- blocked のまま残ったタスクとその理由 (対象は `impl-status` で今も blocked のタスクだけ。理由は `.devflow/blocked.md` のそのタスクの最後の記録から。「解除」の記録があるものは載せない)
 - 人が確認する項目: `manual` 種別と `review` 種別の ID (`docs/traceability.md` の一覧から。review は `.devflow/review-log.md` の自己確認の記録を添える)
 - 検証で見つかって修正した漏れの一覧 (`.devflow/verification-log.md` から)
 - 未解決の漏れ (最大ラウンド超過、設計の不備) があればその一覧

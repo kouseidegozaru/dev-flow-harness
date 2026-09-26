@@ -118,6 +118,9 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 - **対話フェーズ**: `claude` を起動して `/dev-flow` (または何か一言。SessionStart フックが進行中のフェーズを知らせる)。`.devflow/decisions/<phase>.md` から続ける
 - **実装・検証**: `claude --permission-mode bypassPermissions` を起動して `/dev-flow` (または何か一言)。in_progress のタスクと `handoff.md` から続ける。
   途中の作業はタスクごと・引き継ぎごとにコミットされている
+- **自動フェーズが止まったとき** (テスト環境の不備、タスク一覧が読めない、進捗がない、残りが blocked だけ): 原因を直してから再開する。
+  理由ごとの見る場所と直し方は [phases/05-implementation.md](.claude/skills/dev-flow/phases/05-implementation.md) の「止まったあとの再開」。
+  blocked を todo に戻すと、`.devflow/blocked.md` に解除の記録が付き、最終レポートには載らなくなる
 - 状況の確認: `/dev-flow status`、または `pwsh -NoProfile -File scripts/devflow-state.ps1 impl-status`
 
 ### フェーズをやり直す
