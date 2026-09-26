@@ -103,7 +103,9 @@ function Get-DefaultConfig {
         # コメント中の TODO/FIXME/XXX だけを大文字小文字を区別して拾う (識別子の Todo などに反応しないため)
         stubPatterns            = @(
             '(?-i)(//|#|/\*|--|<!--|\*)\s*(TODO|FIXME|XXX)\b', 'NotImplementedException', 'NotImplementedError',
-            'raise NotImplemented', 'unimplemented!\(', '(?-i)\btodo!\(', 'not implemented'
+            'raise NotImplemented', 'unimplemented!\(', '(?-i)\btodo!\(',
+            # 文字列リテラル全体が「not implemented」のものだけ ("501 Not Implemented" のような正当な文言には反応しない)
+            '["''`]not implemented( yet)?[.!]?["''`]'
         )
     }
 }
