@@ -198,7 +198,6 @@ scripts/
   verification-log.md         # 検証ラウンドごとの漏れと追加タスク
   implementer.json            # 実行中の実装担当の記録 (git 管理外)
   orchestrator.json           # オーケストレーターの登録 (git 管理外)
-  context-usage               # ステータスラインが書き出す使用率 (git 管理外)
 ```
 
 ## スクリプト

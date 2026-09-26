@@ -87,7 +87,6 @@ if (Test-Path -LiteralPath $settingsPath) {
 # .gitignore
 $ignore = @(
     '# dev-flow の一時ファイル',
-    '.devflow/context-usage',
     '.devflow/implementer.json',
     '.devflow/orchestrator.json',
     '.devflow/logs/',

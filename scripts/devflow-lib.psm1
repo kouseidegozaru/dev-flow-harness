@@ -148,13 +148,11 @@ function New-DevflowState {
         implementation  = [ordered]@{
             currentTask = $null
             taskBase    = [ordered]@{}   # タスク ID → 開始時点のコミット (blocked にしたとき、ここまで戻す)
-            sessions    = 0
         }
         verification    = [ordered]@{
             round       = 0
             roundOpen   = $false
             addedTasks  = @()
-            lastResult  = $null
         }
         updatedAt       = (Get-Date).ToString('o')
     }
@@ -532,41 +530,6 @@ function Get-TranscriptContextTokens([string]$TranscriptPath, [switch]$IncludeSi
             if ($u.PSObject.Properties[$k] -and $u.$k) { $sum += [double]$u.$k }
         }
         return $sum
-    }
-    return $null
-}
-
-function Write-ContextUsage([string]$Root, [double]$Percent, [double]$Tokens, [double]$Window, [string]$Source, [string]$SessionId) {
-    $obj = [ordered]@{
-        percent   = [Math]::Round($Percent, 1)
-        tokens    = $Tokens
-        window    = $Window
-        source    = $Source
-        sessionId = $SessionId
-        at        = (Get-Date).ToString('o')
-    }
-    Write-Utf8 (Join-DevflowPath $Root '.devflow/context-usage') (($obj | ConvertTo-Json -Compress) + "`n")
-}
-
-function Get-ContextUsage([string]$Root, $Config, $HookInput) {
-    # transcript から計算した値を優先し、なければステータスラインの書き出しを使う
-    $window = [double]$Config.contextWindowTokens
-    $sid = if ($HookInput -and $HookInput.PSObject.Properties['session_id']) { [string]$HookInput.session_id } else { '' }
-    $tp = if ($HookInput -and $HookInput.PSObject.Properties['transcript_path']) { [string]$HookInput.transcript_path } else { '' }
-    $tokens = Get-TranscriptContextTokens $tp
-    if ($null -ne $tokens) {
-        $pct = if ($window -gt 0) { $tokens / $window * 100 } else { 0 }
-        Write-ContextUsage $Root $pct $tokens $window 'transcript' $sid
-        return [pscustomobject]@{ Percent = $pct; Tokens = $tokens; Window = $window; Source = 'transcript' }
-    }
-    $f = Join-DevflowPath $Root '.devflow/context-usage'
-    if (Test-Path -LiteralPath $f) {
-        try {
-            $o = Read-Utf8 $f | ConvertFrom-Json
-            if (-not $sid -or $o.sessionId -eq $sid) {
-                return [pscustomobject]@{ Percent = [double]$o.percent; Tokens = [double]$o.tokens; Window = [double]$o.window; Source = [string]$o.source }
-            }
-        } catch {}
     }
     return $null
 }

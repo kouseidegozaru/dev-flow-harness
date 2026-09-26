@@ -91,7 +91,7 @@ switch ($Command) {
         foreach ($f in 'handoff.md', 'blocked.md') {
             $p = Join-DevflowPath $root ".devflow/$f"
             if (-not (Test-Path -LiteralPath $p)) {
-                $title = if ($f -eq 'handoff.md') { '# セッション引き継ぎメモ' } else { '# 行き詰まったタスクの記録' }
+                $title = if ($f -eq 'handoff.md') { '# 実装担当の引き継ぎメモ' } else { '# 行き詰まったタスクの記録' }
                 Write-Utf8 $p "$title`n"
             }
         }
