@@ -139,7 +139,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 |----|--------------|
 | 1. 網羅状況 | `devflow-trace -Mode full` の漏れ件数が 0 か。詳細は `docs/traceability.md` (要件 → 設計 → タスク → テストの対応表) |
 | 2. blocked のまま残ったタスク | 理由と「必要な判断」。判断して設計を直したら、タスクを `todo` に戻して `/dev-flow redo implementation` で実装を再開する。途中までの作業を生かすなら、blocked.md にある `git revert <取り消しコミット>` で先に復元する |
-| 3. 人が確認する項目 | `manual` 種別と `review` 種別の ID (review は実装担当が実装時に自己確認済み) |
+| 3. 人が確認する項目 | `manual` 種別と `review` 種別の ID (review には、実装担当が実装時に `.devflow/review-log.md` に残した自己確認の記録が付く) |
 | 4. 検証で見つかって修正した漏れ | 機械チェックが見つけ、追加タスクで実装した内容 |
 | 5. 未解決の漏れ | 最大ラウンド超過や設計の不備で残ったもの |
 
@@ -195,6 +195,7 @@ scripts/
   decisions/<phase>.md        # 対話フェーズの決定ツリー
   handoff.md                  # 実装担当の間の引き継ぎ
   blocked.md                  # 行き詰まったタスクの記録
+  review-log.md               # review 種別の ID の自己確認の記録 (trace が有無を検査する)
   verification-log.md         # 検証ラウンドごとの漏れと追加タスク
   implementer.json            # 実行中の実装担当の記録 (git 管理外)
   orchestrator.json           # オーケストレーターの登録 (git 管理外)

@@ -259,11 +259,31 @@ function Find-Stubs([string[]]$Files) {
     }
 }
 
+# review 種別の自己確認の記録 (.devflow/review-log.md の `- [<ID>] ...` の行)。検証フェーズはコードを読まないので、記録の有無だけを機械的に見る
+$reviewLines = @{}
+$reviewLogPath = Join-DevflowPath $root '.devflow/review-log.md'
+if (Test-Path -LiteralPath $reviewLogPath) {
+    foreach ($l in (Read-Utf8 $reviewLogPath) -split "`r?`n") {
+        foreach ($m in [regex]::Matches($l, '\[([^\]]+)\]')) {
+            $rid = $m.Groups[1].Value
+            if (-not $reviewLines.ContainsKey($rid)) { $reviewLines[$rid] = $l.Trim().TrimStart('-').Trim() }
+        }
+    }
+}
+function Test-ReviewRecorded($d, [string]$TaskId) {
+    if ($d.verify -ne 'review' -or $reviewLines.ContainsKey($d.id)) { return }
+    Add-Issue 'REVIEW-NOT-RECORDED' $TaskId "review の ID $($d.id) の確認結果が .devflow/review-log.md に記録されていません" $d.where
+}
+
 if ($Mode -eq 'full') {
     foreach ($t in $tasks.Values) {
         if ($t.status -ne 'done') { Add-Issue 'TASK-NOT-DONE' $t.id "タスクが完了していません (状態: $($t.status))" $t.file }
     }
     foreach ($d in $defs.Values) { Test-IdTests $d }
+    foreach ($d in $defs.Values) {
+        $doneBy = @($d.tasks | Where-Object { $tasks.Contains($_) -and $tasks[$_].status -eq 'done' })
+        if ($doneBy.Count -gt 0) { Test-ReviewRecorded $d ($doneBy -join ',') }
+    }
     Find-Stubs (Select-ByGlobs $allFiles $config.source.files)
 }
 
@@ -273,7 +293,7 @@ if ($Mode -eq 'task') {
     $t = $tasks[$Task]
     $keep = @($issues | Where-Object { $_.id -eq $Task -or $_.code -in @('TESTS-FAILING', 'NO-TEST-COMMAND', 'NO-TEST-RESULTS') -or ($_.code -eq 'UNKNOWN-REF' -and $_.where -notlike 'docs/*') })
     $issues.Clear(); foreach ($i in $keep) { $issues.Add($i) }
-    foreach ($a in $t.assigned) { if ($defs.Contains($a)) { Test-IdTests $defs[$a] } }
+    foreach ($a in $t.assigned) { if ($defs.Contains($a)) { Test-IdTests $defs[$a]; Test-ReviewRecorded $defs[$a] $Task } }
     $existing = @($t.files | Where-Object { Test-Path -LiteralPath (Join-DevflowPath $root $_) -PathType Leaf })
     foreach ($f in @($t.files | Where-Object { $existing -notcontains $_ })) { Add-Issue 'FILE-MISSING' $Task "タスクで作成するファイルがありません: $f" $t.file }
     Find-Stubs $existing
@@ -367,7 +387,7 @@ $summary = [ordered]@{
     testRun   = $testRun
     issues    = @($issues)
     warnings  = @($warnings)
-    review    = @($defs.Values | Where-Object { $_.verify -eq 'review' } | ForEach-Object { [ordered]@{ id = $_.id; summary = $_.summary; tasks = @($_.tasks); where = $_.where } })
+    review    = @($defs.Values | Where-Object { $_.verify -eq 'review' } | ForEach-Object { [ordered]@{ id = $_.id; summary = $_.summary; tasks = @($_.tasks); where = $_.where; record = $reviewLines[$_.id] } })
     manual    = @($defs.Values | Where-Object { $_.verify -eq 'manual' } | ForEach-Object { [ordered]@{ id = $_.id; summary = $_.summary; where = $_.where } })
     at        = (Get-Date).ToString('o')
 }
@@ -432,10 +452,15 @@ if ($Mode -ne 'task' -and -not $NoReport -and (Test-Path -LiteralPath $docsRoot)
         [void]$sb.AppendLine("| $($d.id) | $layerJa | $($d.verify) | $($d.upstream -join ', ') | $(($d.tasks | Sort-Object) -join ', ') | $tests | $($d.where) |")
     }
     [void]$sb.AppendLine('')
-    [void]$sb.AppendLine('## 人が確認する項目: review (実装時に tdd-implementer が自己確認済み)')
+    [void]$sb.AppendLine('## 人が確認する項目: review (実装時の自己確認の記録は .devflow/review-log.md)')
     [void]$sb.AppendLine('')
     if ($summary.review.Count -eq 0) { [void]$sb.AppendLine('なし') }
-    else { foreach ($m in $summary.review) { [void]$sb.AppendLine("- $($m.id): $($m.summary) ($($m.where)) 担当: $(($m.tasks | Sort-Object) -join ', ')") } }
+    else {
+        foreach ($m in $summary.review) {
+            $rec = if ($m.record) { "自己確認: $($m.record)" } else { '自己確認: **記録なし**' }
+            [void]$sb.AppendLine("- $($m.id): $($m.summary) ($($m.where)) 担当: $(($m.tasks | Sort-Object) -join ', ') / $rec")
+        }
+    }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## 手動確認が必要な項目 (manual)')
     [void]$sb.AppendLine('')

@@ -4,7 +4,7 @@
 設計で決めたことがすべて実装されているかを機械チェック (`devflow-trace.ps1 -Mode full`) で確認し、漏れがあれば追加タスクにして実装フェーズに戻す。
 
 コードを読んで突き合わせる監査は行わない (トークン消費が大きいため)。`review` 種別の ID は、実装時に `tdd-implementer` が
-完了条件として自己確認している。最終レポートで、人が確認する項目として一覧にする。
+完了条件として自己確認し、`.devflow/review-log.md` に記録している (記録がなければ trace が REVIEW-NOT-RECORDED を出す)。最終レポートで、その記録とともに人が確認する項目として一覧にする。
 
 ## 入力
 
@@ -68,7 +68,7 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 
 - 全 ID の網羅状況 (`docs/traceability.md` の集計を転記)
 - blocked のまま残ったタスクとその理由 (`.devflow/blocked.md` から)
-- 人が確認する項目: `manual` 種別と `review` 種別の ID (`docs/traceability.md` の一覧から。review は実装時に自己確認済み)
+- 人が確認する項目: `manual` 種別と `review` 種別の ID (`docs/traceability.md` の一覧から。review は `.devflow/review-log.md` の自己確認の記録を添える)
 - 検証で見つかって修正した漏れの一覧 (`.devflow/verification-log.md` から)
 - 未解決の漏れ (最大ラウンド超過、設計の不備) があればその一覧
 

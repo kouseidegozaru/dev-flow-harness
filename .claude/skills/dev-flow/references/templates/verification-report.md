@@ -21,7 +21,7 @@
 
 ## 3. 人が確認する項目
 
-`manual` 種別 (未確認) と `review` 種別 (実装時に tdd-implementer が自己確認済み)。
+`manual` 種別 (未確認) と `review` 種別 (実装時の tdd-implementer の自己確認の記録を `.devflow/review-log.md` から添える)。
 
 | ID | 種別 | 内容 | 確認方法の案 |
 |----|------|------|--------------|
