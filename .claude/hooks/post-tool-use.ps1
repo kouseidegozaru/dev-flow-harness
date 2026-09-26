@@ -21,7 +21,7 @@ Update-LoopBaseTokens $root $usage
 $threshold = [double]$config.contextThresholdPercent
 if (-not (Test-ContextOver $root $config $usage)) { exit 0 }
 
-$msg = ('[dev-flow] コンテキスト使用率 {0:N0}% (閾値 {1}%)。新しいタスク・新しい監査には着手しないこと。' -f $usage.Percent, $threshold) +
+$msg = ('[dev-flow] コンテキスト使用率 {0:N0}% (閾値 {1}%)。新しいタスクには着手しないこと。' -f $usage.Percent, $threshold) +
     '今のタスクがコミット可能な区切りに達したら (または今すぐ中断して)、手順書の「セッションの終え方」に従い、' +
     '.devflow/handoff.md を更新し、変更をコミットしてから応答を終えること。次のセッションが handoff.md から再開する。'
 Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'PostToolUse'; additionalContext = $msg } }

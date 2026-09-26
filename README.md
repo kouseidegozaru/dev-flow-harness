@@ -25,7 +25,7 @@ Claude Code 上で **企画・構想 → 要件定義 → 基本設計 → 詳�
 pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェクトのパス>
 ```
 
-`.claude/skills/dev-flow`、`.claude/agents/` の 4 エージェント、`.claude/hooks/`、`scripts/devflow-*` をコピーし、
+`.claude/skills/dev-flow`、`.claude/agents/` の 3 エージェント、`.claude/hooks/`、`scripts/devflow-*` をコピーし、
 `.claude/settings.json` にフックを追記し、`.gitignore` と `.gitattributes` を更新する。対象は git リポジトリであること。
 
 ## 使い方
@@ -80,7 +80,7 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
   (Red はテストが失敗すること、Green / Refactor は全テストが成功することを、スクリプトが実際にテストを実行して確認する)
 - コンテキスト使用率が閾値 (既定 50%) を超え、かつセッション開始時から一定量 (`minSessionWorkTokens`) 作業していると、handoff.md を書いてコミットし、セッションを切り替える
 - 全タスクが終わると検証フェーズに進み、漏れがあれば追加タスクを作って実装に戻る。漏れゼロ (または残りが blocked のみ) で終了する
-  (監査の単位と監査担当への依頼文は `scripts/devflow-audit.ps1 list` / `prompt <unit>` が出す。監査結果は `.devflow/verification-log.md` にまとまりごとにコミットされる)
+  (検証は機械チェック `devflow-trace.ps1 -Mode full` だけで行う。コードを読んで突き合わせる監査は、トークン消費が大きいため行わない)
 - 終了コード: 0 = 完了 / 2 = フェーズが実装・検証でない / 3 = 進捗なしで停止 / 4 = 最大反復回数に到達 / 5 = 利用上限に到達 (リセット後に再実行すると続きから再開)
 - ログ: `.devflow/logs/loop.log`、各セッションの JSON 出力 `.devflow/logs/session-NNN.json`
 
@@ -113,8 +113,8 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
 |----|--------------|
 | 1. 網羅状況 | `devflow-trace -Mode full` の漏れ件数が 0 か。詳細は `docs/traceability.md` (要件 → 設計 → タスク → テストの対応表) |
 | 2. blocked のまま残ったタスク | 理由と「必要な判断」。判断して設計を直したら、タスクを `todo` に戻してループを再実行する |
-| 3. 手動確認が必要な項目 | `manual` 種別の ID。人が確認する |
-| 4. 監査で見つかって修正した漏れ | 監査 (implementation-auditor) が見つけ、追加タスクで実装した内容 |
+| 3. 人が確認する項目 | `manual` 種別と `review` 種別の ID (review は実装時に自己確認済み)。人が確認する |
+| 4. 検証で見つかって修正した漏れ | 機械チェックが見つけ、追加タスクで実装した内容 |
 | 5. 未解決の漏れ | 最大ラウンド超過や設計の不備で残ったもの |
 
 ## 構成
@@ -133,8 +133,7 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
   agents/
     design-reviewer.md        # 詳細設計を実装者目線でレビュー
     screen-designer.md        # 画面デザインを HTML などで作成・修正 (文章の指示で修正)
-    tdd-implementer.md        # 1 タスクを TDD で実装
-    implementation-auditor.md # 設計とコードを突き合わせて漏れを検出
+    tdd-implementer.md        # 1 タスクを TDD で実装 (review 種別の ID も完了時に自己確認)
   hooks/
     session-start.ps1         # /clear 後の自動再開、自動ループの再開、compact 後の再読指示
     stop.ps1                  # 自動ループ: 作業が残っていれば継続、閾値超えなら引き継ぎを強制
@@ -144,7 +143,7 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
 scripts/
   devflow-lib.psm1            # 共通ライブラリ
   devflow-state.ps1           # state.json / tasks/index.md の状態操作 (エージェントに手で書き換えさせない)
-  devflow-trace.ps1 (.sh)     # ID の網羅性検証、traceability.md・index.md の ID 一覧・監査計画の生成
+  devflow-trace.ps1 (.sh)     # ID の網羅性検証、traceability.md・index.md の ID 一覧の生成
   devflow-commit.ps1          # TDD コミット規約の機械的な強制
   devflow-implement.ps1 (.sh) # 実装・検証の自動ループ
   devflow-install.ps1         # 対象プロジェクトへの導入
@@ -171,7 +170,7 @@ scripts/
 詳細は [.claude/skills/dev-flow/references/traceability.md](.claude/skills/dev-flow/references/traceability.md)。要点:
 
 - ID は、見出しに `ID` と `検証` の列を持つ Markdown 表の 1 行として定義する。`上流` 列に上位の ID を書く
-- 検証方法は `test` (原則) / `review` (監査がコードを読んで確認) / `manual` (最終レポートに列挙)
+- 検証方法は `test` (原則) / `review` (実装時に自己確認し、最終レポートで人が確認) / `manual` (最終レポートに列挙)
 - テスト名に `[REQ-TODO-001]` の形で ID を入れる。trace は JUnit XML / TRX のテスト名から ID ごとの成否を判定する
 - `devflow-trace.ps1 -Mode docs | design | full | task`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー
 

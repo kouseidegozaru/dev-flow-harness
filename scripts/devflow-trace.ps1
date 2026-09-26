@@ -23,8 +23,7 @@ param(
     [string]$Task = '',
     [switch]$NoRun,          # テストを実行せず、既存の結果ファイルを使う
     [switch]$UpdateIndexes,  # 各 index.md の自動生成ブロック (ID 一覧) を更新する
-    [switch]$NoReport,       # docs/traceability.md を書き出さない
-    [switch]$AuditPlan       # .devflow/audit-plan.json (検証フェーズの監査単位) を書き出す
+    [switch]$NoReport        # docs/traceability.md を書き出さない
 )
 
 $ErrorActionPreference = 'Stop'
@@ -362,45 +361,6 @@ if ($UpdateIndexes) {
 }
 
 # ---------------------------------------------------------------------------
-# 5b. 監査計画 (検証フェーズで implementation-auditor に渡す単位)
-# ---------------------------------------------------------------------------
-if ($AuditPlan) {
-    # 単位 = 層ディレクトリからの相対パス。03 と 04 で同じ相対パス (例 api/task.md) は 1 単位にまとめる
-    $units = [ordered]@{}
-    foreach ($d in @($defs.Values | Where-Object { $_.layer -in @('basic', 'detailed') })) {
-        $key = [regex]::Replace($d.file, '^docs/0[34]-[a-z-]+/', '')
-        if (-not $units.Contains($key)) {
-            $units[$key] = [ordered]@{ unit = $key; designFiles = [System.Collections.Generic.List[string]]::new(); ids = [System.Collections.Generic.List[object]]::new() }
-        }
-        $u = $units[$key]
-        if (-not $u.designFiles.Contains($d.file)) { $u.designFiles.Add($d.file) }
-        $u.ids.Add([ordered]@{ id = $d.id; verify = $d.verify })
-    }
-    $testGlobs = $config.test.files
-    $plan = foreach ($u in $units.Values) {
-        $idSet = @($u.ids | ForEach-Object { $_.id })
-        $up = @($idSet | ForEach-Object { $defs[$_].upstream } | Where-Object { $defs.Contains($_) } | Select-Object -Unique)
-        $upFiles = @($up | ForEach-Object { $defs[$_].file } | Where-Object { $u.designFiles -notcontains $_ } | Select-Object -Unique)
-        $tk = @($idSet + $up | ForEach-Object { $defs[$_].tasks } | Select-Object -Unique)
-        $files = @($tk | ForEach-Object { $tasks[$_].files } | Select-Object -Unique)
-        $testFs = @(Select-ByGlobs $files $testGlobs)
-        [ordered]@{
-            unit          = $u.unit
-            designFiles   = @($u.designFiles)
-            upstreamFiles = $upFiles
-            upstreamIds   = $up
-            ids           = @($u.ids)
-            tasks         = $tk
-            codeFiles     = @($files | Where-Object { $testFs -notcontains $_ })
-            testFiles     = $testFs
-        }
-    }
-    $obj = [ordered]@{ generatedAt = (Get-Date).ToString('o'); units = @($plan) }
-    Write-Utf8 (Join-DevflowPath $root '.devflow/audit-plan.json') (($obj | ConvertTo-Json -Depth 8) + "`n")
-    Write-Output "監査計画: $(@($plan).Count) 単位 → .devflow/audit-plan.json"
-}
-
-# ---------------------------------------------------------------------------
 # 6. 出力
 # ---------------------------------------------------------------------------
 $warnings = [System.Collections.Generic.List[object]]::new()
@@ -433,7 +393,7 @@ $summary = [ordered]@{
     testRun   = $testRun
     issues    = @($issues)
     warnings  = @($warnings)
-    review   = @($defs.Values | Where-Object { $_.verify -eq 'review' } | ForEach-Object { [ordered]@{ id = $_.id; tasks = @($_.tasks); where = $_.where } })
+    review    = @($defs.Values | Where-Object { $_.verify -eq 'review' } | ForEach-Object { [ordered]@{ id = $_.id; summary = $_.summary; tasks = @($_.tasks); where = $_.where } })
     manual    = @($defs.Values | Where-Object { $_.verify -eq 'manual' } | ForEach-Object { [ordered]@{ id = $_.id; summary = $_.summary; where = $_.where } })
     at        = (Get-Date).ToString('o')
 }
@@ -498,6 +458,11 @@ if ($Mode -ne 'task' -and -not $NoReport -and (Test-Path -LiteralPath $docsRoot)
         [void]$sb.AppendLine("| $($d.id) | $layerJa | $($d.verify) | $($d.upstream -join ', ') | $(($d.tasks | Sort-Object) -join ', ') | $tests | $($d.where) |")
     }
     [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## 人が確認する項目: review (実装時に tdd-implementer が自己確認済み)')
+    [void]$sb.AppendLine('')
+    if ($summary.review.Count -eq 0) { [void]$sb.AppendLine('なし') }
+    else { foreach ($m in $summary.review) { [void]$sb.AppendLine("- $($m.id): $($m.summary) ($($m.where)) 担当: $(($m.tasks | Sort-Object) -join ', ')") } }
+    [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## 手動確認が必要な項目 (manual)')
     [void]$sb.AppendLine('')
     if ($summary.manual.Count -eq 0) { [void]$sb.AppendLine('なし') }
@@ -519,7 +484,10 @@ if ($issues.Count -eq 0) {
 Write-Output "devflow-trace ($Mode$(if ($Task) { " $Task" })): NG — $($issues.Count) 件"
 foreach ($g in $byCode) {
     Write-Output "[$($g.Name)] $($g.Count) 件"
-    foreach ($i in ($g.Group | Select-Object -First 30)) { Write-Output "  - $($i.id) $($i.message) $(if ($i.where) { "($($i.where))" })" }
+    foreach ($i in ($g.Group | Select-Object -First 30)) {
+        $owner = if ($i.id -and $defs.Contains($i.id) -and @($defs[$i.id].tasks).Count -gt 0) { " 担当: $((@($defs[$i.id].tasks) | Sort-Object) -join ', ')" } else { '' }
+        Write-Output "  - $($i.id) $($i.message) $(if ($i.where) { "($($i.where))" })$owner"
+    }
     if ($g.Count -gt 30) { Write-Output "  … ほか $($g.Count - 30) 件 (.devflow/$resultName を参照)" }
 }
 exit 1

@@ -3,7 +3,7 @@
   dev-flow ハーネスを対象プロジェクトに導入する。
 
 .DESCRIPTION
-  コピーするもの: .claude/skills/dev-flow、.claude/agents の 4 エージェント、.claude/hooks、scripts/devflow-*
+  コピーするもの: .claude/skills/dev-flow、.claude/agents の 3 エージェント、.claude/hooks、scripts/devflow-*
   .claude/settings.json は、既存のものがあればフックを追記し、statusLine は未設定のときだけ設定する。
   .gitignore に dev-flow の一時ファイルを追記する。
 
@@ -35,7 +35,12 @@ function Copy-Item2([string]$Rel) {
 
 Copy-Item2 '.claude/skills/dev-flow'
 if (-not (Test-Path -LiteralPath (Join-Path $dst '.gitattributes'))) { Copy-Item2 '.gitattributes' } elseif (-not (Select-String -LiteralPath (Join-Path $dst '.gitattributes') -Pattern '*.sh' -SimpleMatch -Quiet)) { Add-Content -LiteralPath (Join-Path $dst '.gitattributes') -Value '*.sh text eol=lf'; Write-Output 'update: .gitattributes' }
-foreach ($a in 'design-reviewer', 'screen-designer', 'tdd-implementer', 'implementation-auditor') { Copy-Item2 ".claude/agents/$a.md" }
+foreach ($a in 'design-reviewer', 'screen-designer', 'tdd-implementer') { Copy-Item2 ".claude/agents/$a.md" }
+# 廃止したファイル (以前の版で導入されたもの) を消す
+foreach ($old in '.claude/agents/implementation-auditor.md', 'scripts/devflow-audit.ps1', '.devflow/audit-plan.json') {
+    $op = Join-Path $dst $old
+    if ($Force -and (Test-Path -LiteralPath $op)) { Remove-Item -LiteralPath $op -Force; Write-Output "remove (廃止): $old" }
+}
 foreach ($h in Get-ChildItem -LiteralPath (Join-Path $src '.claude/hooks') -File) { Copy-Item2 ".claude/hooks/$($h.Name)" }
 foreach ($s in Get-ChildItem -LiteralPath (Join-Path $src 'scripts') -File -Filter 'devflow-*') {
     if ($s.Name -like 'devflow-install*') { continue }
@@ -75,8 +80,7 @@ $ignore = @(
     '.devflow/context-usage',
     '.devflow/loop-session.json',
     '.devflow/logs/',
-    '.devflow/trace-*.json',
-    '.devflow/audit-plan.json'
+    '.devflow/trace-*.json'
 )
 $gi = Join-Path $dst '.gitignore'
 $cur = if (Test-Path -LiteralPath $gi) { Get-Content -LiteralPath $gi } else { @() }

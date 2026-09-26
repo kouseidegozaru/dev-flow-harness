@@ -49,7 +49,9 @@ model: inherit
 pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode task -Task <TASK-ID>
 ```
 
-さらに、タスクファイルの「完了条件」を 1 項目ずつ確認する。
+さらに、タスクファイルの「完了条件」を 1 項目ずつ確認する。担当 ID のうち検証方法が `review` のものは、テストでは確かめられないので、
+自分のコード (と必要なら README などの成果物) を読み返して設計どおりかを確かめ、`DONE-CRITERIA` に ID ごとに根拠を書く。
+検証フェーズではコードの突き合わせを行わないため、ここでの確認が review 種別の唯一の確認になる。
 
 ## 禁止事項
 

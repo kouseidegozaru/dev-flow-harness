@@ -3,4 +3,3 @@
 .devflow/loop-session.json
 .devflow/logs/
 .devflow/trace-*.json
-.devflow/audit-plan.json
