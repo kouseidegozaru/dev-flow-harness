@@ -47,10 +47,10 @@ function Write-LogTail($r) {
     Get-Content -LiteralPath (Join-DevflowPath $root $r.Log) -Tail 30 | ForEach-Object { Write-Output "  $_" }
 }
 
-$pending = @(& git status --porcelain -- @Paths | Where-Object { $_ })
+$pending = @(Get-UncommittedChanges $root $config $Paths)
 if ($pending.Count -eq 0) { Write-Output 'コミットする変更がありません'; exit 1 }
 
-# テストを先に実行し、条件を満たしたときだけステージする (テスト実行の生成物を巻き込まないため)
+# テストを先に実行し、条件を満たしたときだけステージする
 switch ($Kind) {
     'test' {
         $r = Invoke-Tests
@@ -82,7 +82,9 @@ switch ($Kind) {
     }
 }
 
-if ($Paths.Count -gt 0) { & git add -- @Paths } else { & git add -A }
+# テスト結果ファイル (test.resultGlobs) はテストを実行するたびに作り直される生成物なので、.gitignore になくてもコミットしない
+$exclude = @(Get-ResultExcludePathspecs $config)
+if ($Paths.Count -gt 0) { & git add -- @Paths @exclude } else { & git add -A -- . @exclude }
 if ($LASTEXITCODE -ne 0) { exit 2 }
 & git diff --cached --quiet
 if ($LASTEXITCODE -eq 0) { Write-Output 'コミットする変更がありません'; exit 1 }

@@ -175,7 +175,7 @@ switch ($Command) {
         if (-not $s.implementation.Contains('taskBase') -or $null -eq $s.implementation.taskBase) { $s.implementation.taskBase = [ordered]@{} }
         $undoNote = ''
         if ($Arg2 -eq 'blocked') {
-            $dirty = @(& git -C $root status --porcelain | Where-Object { $_ })
+            $dirty = @(Get-UncommittedChanges $root $config)
             if ($dirty.Count -gt 0) {
                 Write-Output "$Arg1 を blocked にできません: 未コミットの変更があります。先に ``devflow-commit.ps1 -Kind chore -Scope $Arg1 -Message ""WIP (blocked)""`` でコミットすること"
                 exit 1

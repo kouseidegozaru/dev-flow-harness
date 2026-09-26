@@ -39,7 +39,7 @@ if ($over) {
     $handoff = Join-DevflowPath $root '.devflow/handoff.md'
     $started = [datetime]::Parse([string]$run.startedAt)
     $handoffFresh = (Test-Path -LiteralPath $handoff) -and ((Get-Item -LiteralPath $handoff).LastWriteTime -gt $started)
-    $dirty = @(& git -C $root status --porcelain 2>$null | Where-Object { $_ })
+    $dirty = @(Get-UncommittedChanges $root $config)
     if ($handoffFresh -and $dirty.Count -eq 0) { exit 0 }
     $todo = @()
     if (-not $handoffFresh) { $todo += '.devflow/handoff.md を更新する (完了したタスク / 作業中タスクの状態と途中経過 / 次にやること)' }

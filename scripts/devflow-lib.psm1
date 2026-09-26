@@ -298,6 +298,17 @@ function Invoke-TestCommand([string]$Root, $Config, [string]$LogRel) {
     return [pscustomobject]@{ ExitCode = $code; TimedOut = $timedOut; Log = $LogRel }
 }
 
+function Get-ResultExcludePathspecs($Config) {
+    # テスト結果ファイル (テストのたびに作り直される生成物) を git の対象から外す pathspec
+    return @($Config.test.resultGlobs | Where-Object { $_ } | ForEach-Object { ":(exclude,glob)$_" })
+}
+
+function Get-UncommittedChanges([string]$Root, $Config, [string[]]$Paths = @()) {
+    # 未コミットの変更 (git status --porcelain の行)。テスト結果ファイルは数えない
+    $spec = @(if ($Paths.Count -gt 0) { $Paths } else { '.' })
+    return @(& git -C $Root status --porcelain -- @spec @(Get-ResultExcludePathspecs $Config) 2>$null | Where-Object { $_ })
+}
+
 function Read-TestResultFiles([string]$Root, $Config) {
     # test.resultGlobs の TRX / JUnit XML を読み、@{ name; outcome (passed|failed|skipped|...); file } の一覧を返す
     $out = [System.Collections.Generic.List[object]]::new()
