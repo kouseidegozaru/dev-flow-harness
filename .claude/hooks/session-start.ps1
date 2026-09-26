@@ -2,7 +2,7 @@
 #
 # - source=clear   : 前フェーズ完了後の /clear。次フェーズの開始指示を注入する
 #                    (実装・検証フェーズは、このセッションをオーケストレーターとして開始させる)
-# - source=startup : 進行中フェーズを知らせる
+# - source=startup : 進行中フェーズを知らせる。実装・検証フェーズが未開始なら (詳細設計の後に起動し直した)、clear と同じく開始させる
 # - source=compact : 手順書と決定ツリー (実装・検証なら状態と引き継ぎ) の再読を指示する
 # - source=resume  : 会話がそのまま残るので何もしない
 
@@ -54,8 +54,17 @@ switch ($source) {
             $started = if ($state.phaseStarted) { '途中まで進んでいる' } else { 'まだ始まっていない' }
             Out-Context "[dev-flow] 開発フローが進行中 (現在フェーズ: $label, $started)。ユーザーが続きを望んだら .claude/skills/dev-flow/SKILL.md に従って再開する。"
         }
+        if ($autoPhases -contains $phase -and -not $state.phaseStarted) {
+            # 詳細設計の終わりに「権限モードを変えて起動し直し、一言送る」と案内している。/clear のときと同じく開始させる
+            Out-Context @"
+[dev-flow 自動再開]
+前フェーズが完了し、Claude Code が起動し直された。現在フェーズ: $phase ($label)。このフェーズはユーザーに質問せず最後まで自動で進める。
+ユーザーの最初のメッセージが何であっても (「続けて」「ok」、挨拶など)、それを開始の合図とみなし、直ちに .claude/skills/dev-flow/SKILL.md を読んで、
+このセッションをオーケストレーターとして $label フェーズを開始すること (実装そのものは tdd-implementer サブエージェントが行う)。
+"@
+        }
         if ($autoPhases -contains $phase) {
-            Out-Context "[dev-flow] 開発フローが進行中 (現在フェーズ: $label)。ユーザーが続きを望んだら .claude/skills/dev-flow/SKILL.md に従い、このセッションをオーケストレーターとして再開する。"
+            Out-Context "[dev-flow] 開発フローが進行中 (現在フェーズ: $label、途中で止まっている)。ユーザーが続きを望んだら .claude/skills/dev-flow/SKILL.md に従い、このセッションをオーケストレーターとして再開する。"
         }
     }
     'compact' {
