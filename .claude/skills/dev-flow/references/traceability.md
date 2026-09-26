@@ -100,7 +100,7 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 |--------|------|:----:|:------:|:----:|:----:|
 | DUPLICATE-ID | 同じ ID が複数か所で定義されている | ● | ● | ● | |
 | INVALID-VERIFY | 検証方法が test/review/manual でない | ● | ● | ● | |
-| UNKNOWN-REF | 存在しない ID への参照 (ドキュメント・テストコード・テスト名) | ● | ● | ● | ● |
+| UNKNOWN-REF | 存在しない ID への参照 (ドキュメント・テストコード・テスト名・デザインの data-id) | ● | ● | ● | ● |
 | NO-UPSTREAM | 基本設計・詳細設計の ID に上流 ID がない | ● | ● | ● | |
 | REQ-NOT-COVERED | 要件 ID がどの設計 ID からも参照されていない | 警告 | ● | ● | |
 | NOT-ASSIGNED | test/review の ID がどのタスクにも割り当てられていない | 警告 | ● | ● | |
@@ -109,6 +109,8 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 | NO-TEST / TEST-NOT-PASSING | test の ID を名前に含むテストがない / 成功していない | | | ● | ● (担当分) |
 | TESTS-FAILING | テストコマンドが失敗した | | | ● | ● |
 | STUB-LEFT | TODO・FIXME・スタブ・未実装例外が残っている | | | ● (source.files) | ● (タスクのファイル) |
+| DESIGN-NO-STATE | 画面の状態 ID (`SCR-*-S*`) に対応するデザイン (`data-state-id`) がない (デザインがあるときだけ) | ● | ● | ● | |
+| DESIGN-NO-ELEMENT | 画面の要素・操作 ID (`SCR-*-E*` / `SCR-*-A*`) に対応するデザインの要素 (`data-id`) がない | 警告 | 警告 | 警告 | |
 | REVIEW-NOT-RECORDED | review の ID の自己確認が `.devflow/review-log.md` に記録されていない | | | ● (done のタスク) | ● (担当分) |
 | FILE-MISSING | タスクの「作成・変更するファイル」が存在しない | | | | ● |
 

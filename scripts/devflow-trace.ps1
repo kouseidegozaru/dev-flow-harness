@@ -203,6 +203,29 @@ foreach ($d in $defs.Values) {
     }
 }
 
+# 画面デザイン (docs/03-basic-design/designs/ の HTML) の data-id / data-state-id と画面仕様の ID の突き合わせ。
+# デザインがないプロジェクト (画面のないもの) では何もしない
+$designFiles = @($allFiles | Where-Object { $_ -like 'docs/03-basic-design/designs/*' -and $_ -match '\.html?$' })
+if ($designFiles.Count -gt 0) {
+    $designIds = @{}
+    foreach ($rel in $designFiles) {
+        $n = 0
+        foreach ($l in (Read-Utf8 (Join-DevflowPath $root $rel)) -split "`r?`n") {
+            $n++
+            foreach ($m in [regex]::Matches($l, 'data-(?:state-)?id\s*=\s*["'']([^"'']+)["'']')) {
+                $did = $m.Groups[1].Value.Trim()
+                if (-not $designIds.ContainsKey($did)) { $designIds[$did] = "${rel}:$n" }
+                if (-not $known.ContainsKey($did)) { Add-Issue 'UNKNOWN-REF' $did 'デザインの data-id / data-state-id が、定義されていない ID です' "${rel}:$n" }
+            }
+        }
+    }
+    foreach ($d in $defs.Values) {
+        if ($d.layer -ne 'basic' -or $designIds.ContainsKey($d.id)) { continue }
+        if ($d.id -match '^SCR-[^-]+-S\d+$') { Add-Issue 'DESIGN-NO-STATE' $d.id '画面の状態に対応するデザイン (data-state-id) がありません' $d.where }
+        elseif ($d.id -match '^SCR-[^-]+-[EA]\d+$') { Add-Issue 'DESIGN-NO-ELEMENT' $d.id '画面の要素に対応するデザインの要素 (data-id) がありません (見た目のない要素なら問題ない)' $d.where }
+    }
+}
+
 # ---------------------------------------------------------------------------
 # 4. テスト実行と結果の収集 (full / task)
 # ---------------------------------------------------------------------------
@@ -366,6 +389,11 @@ if ($Mode -eq 'docs') {
     foreach ($i in @($issues | Where-Object { $keep -notcontains $_ })) { $warnings.Add($i) }
     $issues.Clear(); foreach ($i in $keep) { $issues.Add($i) }
 }
+# 常に警告に回す種別 (人が見て判断するもの)
+$soft = @($issues | Where-Object { $_.code -eq 'DESIGN-NO-ELEMENT' })
+if ($soft.Count -gt 0) {
+    foreach ($i in $soft) { $warnings.Add($i); [void]$issues.Remove($i) }
+}
 $byCode = $issues | Group-Object code | Sort-Object Name
 $summary = [ordered]@{
     mode      = $Mode
@@ -472,7 +500,7 @@ if ($Mode -ne 'task' -and -not $NoReport -and (Test-Path -LiteralPath $docsRoot)
 
 # コンソール出力 (エージェントが読む)
 if ($warnings.Count -gt 0) {
-    Write-Output "警告 (後続フェーズで解消する): $($warnings.Count) 件"
+    Write-Output "警告 (終了コードには含めない。後続フェーズで解消するか、人が見て判断する): $($warnings.Count) 件"
     foreach ($g in ($warnings | Group-Object code | Sort-Object Name)) {
         Write-Output "  [$($g.Name)] $($g.Count) 件: $((($g.Group | Select-Object -First 15) | ForEach-Object { $_.id }) -join ', ')$(if ($g.Count -gt 15) { ' …' })"
     }
