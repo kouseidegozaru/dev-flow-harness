@@ -49,7 +49,9 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
    (`templates/task.md` の形式)。
    - 担当ID: 漏れた ID
    - 参照すべき設計: 漏れた ID の定義行を含む節と、元の担当タスクのファイル (テストケースや作るファイルが書かれている)
-   - テストケース: 元の担当タスクのテストケースのうち、漏れた ID に当たるものを指す (「TASK-015 のテストケース #1〜4」のように。同じ内容を書き写さない)
+   - テストケース: 漏れた ID ごとに 1 行書き、元の担当タスクのテストケースを指す (例: `- [REQ-TODO-004] TASK-015 のテストケース #1〜4`)。
+     同じ内容は書き写さないが、行には必ず漏れた ID を書く (trace がテストケース節の ID を数えるため。ないと TASK-NO-TESTCASE になる)
+   - 依存: 空にする (元の担当タスクは done 済み)。タスクファイルと `tasks/index.md` の依存欄をそろえる
    - 漏れが設計の不備 (設計どおりでは実装できない) に起因する場合は、タスクにせず未解決として記録する
 2. `tasks/index.md` に状態 `todo` で追記し、`devflow-state.ps1 add-verification-task <TASK-ID>` で記録する
 3. `devflow-trace.ps1 -Mode design` が exit 0 であることを確かめる (追加タスクの書式の確認)
