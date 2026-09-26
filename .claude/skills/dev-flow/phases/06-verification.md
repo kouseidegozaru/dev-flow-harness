@@ -55,7 +55,7 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 3. `devflow-trace.ps1 -Mode design` が exit 0 であることを確かめる (追加タスクの書式の確認)
 4. `.devflow/verification-log.md` の「## ラウンド <r>」節に、見つけた漏れと追加タスクを追記する (最終レポートの材料)
 5. `devflow-commit.ps1 -Kind docs -Scope verification -Message "検証ラウンド <r>: 追加タスク <n> 件"`
-6. `devflow-state.ps1 set-phase implementation -KeepVerification` で実装フェーズに戻し (このラウンドを閉じる。`-KeepVerification` を付けないと検証の記録が初期化される)、[05-implementation.md](05-implementation.md) の手順 3 から続けて、
+6. `devflow-state.ps1 set-phase implementation -KeepVerification` で実装フェーズに戻し (このラウンドを閉じる。`-KeepVerification` を付けないと検証の記録が初期化される)、[05-implementation.md](05-implementation.md) の手順 4 から続けて、
    実装担当に追加タスクを実装させる。実装フェーズが終わると再びこの検証フェーズに戻る
 
 漏れが 0 件 (追加タスクにするものがない) なら次へ。

@@ -3,7 +3,9 @@
   TDD のコミット規約を機械的に守らせるコミット用スクリプト。
 
 .DESCRIPTION
-  -Kind test     : Red。テストが「失敗する」ことを確認してからコミットする (成功したら拒否)
+  -Kind test     : Red。テストが「失敗する」ことを確認してからコミットする (成功したら拒否)。
+                   結果ファイルに ID を名前に含む失敗したテストがなければ、環境の不備とみなして拒否する
+  テストは test.timeoutSeconds を超えると止め、コミットを拒否する
   -Kind feat     : Green。全テストが成功することを確認してからコミットする
   -Kind refactor : Refactor。全テストが成功することを確認してからコミットする
   -Kind fix      : 検証フェーズなどでの修正。全テスト成功が必要
@@ -32,11 +34,17 @@ Set-Location $root
 
 function Invoke-Tests {
     if (-not $config.test.command) { Write-Output 'test.command が未設定です (.devflow/config.json)'; exit 2 }
-    $log = Join-DevflowPath $root '.devflow/logs/commit-test-run.log'
-    New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
-    & pwsh -NoProfile -Command $config.test.command *> $log
-    $code = $LASTEXITCODE
-    return [pscustomobject]@{ ExitCode = $code; Log = $log }
+    $r = Invoke-TestCommand $root $config '.devflow/logs/commit-test-run.log'
+    if ($r.TimedOut) {
+        Write-Output "コミットを拒否: テストが test.timeoutSeconds ($($config.test.timeoutSeconds) 秒) 以内に終わりませんでした (ログ: $($r.Log))。"
+        Write-Output 'ウォッチモードで起動していないか、無限ループや入力待ちになっていないかを確かめること'
+        exit 1
+    }
+    return $r
+}
+
+function Write-LogTail($r) {
+    Get-Content -LiteralPath (Join-DevflowPath $root $r.Log) -Tail 30 | ForEach-Object { Write-Output "  $_" }
 }
 
 $pending = @(& git status --porcelain -- @Paths | Where-Object { $_ })
@@ -50,13 +58,24 @@ switch ($Kind) {
             Write-Output "Red コミットを拒否: テストが成功しています。先に失敗するテストを書くこと (ログ: $($r.Log))"
             exit 1
         }
-        Write-Output "Red 確認: テストは失敗しています (exit $($r.ExitCode))"
+        # 環境の不備 (テストランナーがない、ビルドが通らない) は Red とみなさない:
+        # 結果ファイルに「ID を名前に含む、失敗したテスト」が 1 件以上あることを確かめる
+        $idre = Get-IdRegex $config
+        $failed = @(Read-TestResultFiles $root $config | Where-Object {
+            $_.outcome -notin @('passed', 'skipped', 'notexecuted') -and @(Get-IdsInText $_.name $idre).Count -gt 0 })
+        if ($failed.Count -eq 0) {
+            Write-Output "Red コミットを拒否: テストコマンドは失敗しましたが (exit $($r.ExitCode))、結果ファイルに ID を名前に含む失敗したテストがありません。"
+            Write-Output 'ビルドエラー (コンパイルエラーは Red ではない)、テストランナーの不在、結果ファイルの出力先 (test.resultGlobs) の誤りのどれか。ログ末尾:'
+            Write-LogTail $r
+            exit 1
+        }
+        Write-Output "Red 確認: テストは失敗しています (exit $($r.ExitCode)、失敗: $(($failed | Select-Object -First 5 | ForEach-Object { $_.name }) -join '; '))"
     }
     { $_ -in @('feat', 'refactor', 'fix') } {
         $r = Invoke-Tests
         if ($r.ExitCode -ne 0) {
             Write-Output "$Kind コミットを拒否: テストが失敗しています (exit $($r.ExitCode))。ログ末尾:"
-            Get-Content -LiteralPath $r.Log -Tail 30 | ForEach-Object { Write-Output "  $_" }
+            Write-LogTail $r
             exit 1
         }
         Write-Output '全テスト成功を確認'

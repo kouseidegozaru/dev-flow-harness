@@ -92,8 +92,9 @@ function Get-DefaultConfig {
         idPrefixes              = @('REQ', 'NFR', 'ARC', 'SCR', 'TRN', 'API', 'ERR', 'EXT', 'DM',
                                     'MOD', 'IF', 'VAL', 'EC', 'DBC', 'BR', 'TASK')
         test                    = [ordered]@{
-            command     = ''
-            resultGlobs = @('**/TestResults/*.trx', '**/junit*.xml', '**/test-results/**/*.xml')
+            command        = ''
+            timeoutSeconds = 900
+            resultGlobs    = @('**/TestResults/*.trx', '**/junit*.xml', '**/test-results/**/*.xml')
             files       = @('tests/**', 'test/**', '**/*.test.*', '**/*_test.*', '**/*Tests.cs', '**/test_*.py')
         }
         source                  = [ordered]@{
@@ -252,6 +253,77 @@ function Find-FilesOnDisk([string]$Root, [object[]]$Globs) {
         }
     }
     return @($out)
+}
+
+# ---------------------------------------------------------------------------
+# テストの実行と結果ファイル
+# ---------------------------------------------------------------------------
+
+function Get-TestCommandName([string]$Command) {
+    # test.command の最初のコマンド名 (dotnet / npx / ./gradlew など)。解析できなければ $null
+    $errs = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($Command, [ref]$null, [ref]$errs)
+    $c = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)
+    if ($c) { return $c.GetCommandName() }
+    return $null
+}
+
+function Invoke-TestCommand([string]$Root, $Config, [string]$LogRel) {
+    # 結果ファイルを消してから test.command を実行する。test.timeoutSeconds を超えたらプロセスツリーごと止める。
+    # 戻り値: @{ ExitCode; TimedOut; Log (ルートからの相対パス) }
+    foreach ($rel in Find-FilesOnDisk $Root $Config.test.resultGlobs) { Remove-Item -LiteralPath (Join-DevflowPath $Root $rel) -Force }
+    $log = Join-DevflowPath $Root $LogRel
+    New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
+    $err = "$log.stderr"
+    $cmd = "`$PSStyle.OutputRendering = 'PlainText'`n" + [string]$Config.test.command
+    $enc = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($cmd))
+    $p = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand', $enc) `
+        -WorkingDirectory $Root -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $err
+    $null = $p.Handle   # ExitCode を確実に取れるようにする
+    $sec = [int]$Config.test.timeoutSeconds
+    $timedOut = $false
+    if ($sec -gt 0) {
+        if (-not $p.WaitForExit($sec * 1000)) {
+            $timedOut = $true
+            try { $p.Kill($true) } catch {}
+            $p.WaitForExit()
+        }
+    } else { $p.WaitForExit() }
+    if (Test-Path -LiteralPath $err) {
+        $e = Read-Utf8 $err
+        if ($e) { Add-Content -LiteralPath $log -Value $e -Encoding utf8 }
+        Remove-Item -LiteralPath $err -Force
+    }
+    if ($timedOut) { Add-Content -LiteralPath $log -Value "dev-flow: test.timeoutSeconds ($sec 秒) を超えたため停止しました" -Encoding utf8 }
+    $code = if ($timedOut) { 124 } else { $p.ExitCode }
+    return [pscustomobject]@{ ExitCode = $code; TimedOut = $timedOut; Log = $LogRel }
+}
+
+function Read-TestResultFiles([string]$Root, $Config) {
+    # test.resultGlobs の TRX / JUnit XML を読み、@{ name; outcome (passed|failed|skipped|...); file } の一覧を返す
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($rel in Find-FilesOnDisk $Root $Config.test.resultGlobs) {
+        $full = Join-DevflowPath $Root $rel
+        try { [xml]$x = Read-Utf8 $full } catch { continue }
+        if ($x.DocumentElement.LocalName -eq 'TestRun') {
+            # Visual Studio TRX
+            foreach ($r in $x.GetElementsByTagName('UnitTestResult')) {
+                $out.Add([pscustomobject]@{ name = $r.GetAttribute('testName'); outcome = $r.GetAttribute('outcome').ToLowerInvariant(); file = $rel })
+            }
+        } else {
+            # JUnit XML
+            foreach ($tc in $x.GetElementsByTagName('testcase')) {
+                $outcome = 'passed'
+                foreach ($c in $tc.ChildNodes) {
+                    if ($c.LocalName -in @('failure', 'error')) { $outcome = 'failed' }
+                    elseif ($c.LocalName -eq 'skipped' -and $outcome -eq 'passed') { $outcome = 'skipped' }
+                }
+                $name = "$($tc.GetAttribute('classname')) $($tc.GetAttribute('name'))".Trim()
+                $out.Add([pscustomobject]@{ name = $name; outcome = $outcome; file = $rel })
+            }
+        }
+    }
+    return $out
 }
 
 # ---------------------------------------------------------------------------

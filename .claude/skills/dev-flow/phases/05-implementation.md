@@ -14,19 +14,21 @@
 
 ## 進め方
 
-1. `pwsh -NoProfile -File scripts/devflow-state.ps1 start-phase`
-2. `pwsh -NoProfile -File scripts/devflow-state.ps1 run start`
+1. `pwsh -NoProfile -File scripts/devflow-state.ps1 preflight` (テストコマンドが実行できる環境かを確かめる)。
+   exit 1 なら実装担当を起動せず、出力をそのままユーザーに報告して止まる (環境の不備のまま進めると、全タスクが blocked になるため)
+2. `pwsh -NoProfile -File scripts/devflow-state.ps1 start-phase`
+3. `pwsh -NoProfile -File scripts/devflow-state.ps1 run start`
    (このセッションをオーケストレーターとして登録する。Stop フックが、作業を残したままこのセッションが応答を終えるのを防ぐ)
-3. `pwsh -NoProfile -File scripts/devflow-state.ps1 impl-status` を実行する
-   - `status` が `ready`: 手順 4 へ
+4. `pwsh -NoProfile -File scripts/devflow-state.ps1 impl-status` を実行する
+   - `status` が `ready`: 手順 5 へ
    - `complete` または `stuck` (残りが blocked とそれに依存するタスクだけ): 「全タスク処理後」へ
    - `no-tasks` (tasks/index.md が無いか、ID と状態の列を持つ表が読めない): 実装担当を起動しない。`devflow-state.ps1 run stop` を実行し、
      「タスク一覧を読めない (docs/04-detailed-design/tasks/index.md を確認し、直したら `/dev-flow` で再開)」とユーザーに報告して止まる
-4. `tdd-implementer` サブエージェントを **前面で** 起動し、終わるまで待つ。依頼文は次の 1 行だけ (タスクの中身を書き足さない):
+5. `tdd-implementer` サブエージェントを **前面で** 起動し、終わるまで待つ。依頼文は次の 1 行だけ (タスクの中身を書き足さない):
 
    > 実装フェーズのタスクを進めよ (次のタスク: <impl-status の nextTask>)。
 
-5. 実装担当の報告 (`STATUS: handoff | no-ready-task` と、done / blocked にしたタスク ID) を受け取ったら、手順 3 に戻る。
+6. 実装担当の報告 (`STATUS: handoff | no-ready-task` と、done / blocked にしたタスク ID) を受け取ったら、手順 4 に戻る。
    報告の中身を検証したり、タスクファイルやコードを読んだりしない
 
 同じ状態 (impl-status の done 件数が増えない) のまま実装担当が 2 回続けて終わった場合は、それ以上起動せず、

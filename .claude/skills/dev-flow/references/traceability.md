@@ -130,6 +130,7 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 ```
 
 - `test.command`: 全テストを実行し、結果ファイルを出力するコマンド (PowerShell で実行される)。失敗時に非 0 で終わること
+- `test.timeoutSeconds`: テスト実行の上限秒数 (既定 900、0 で無制限)。超えたらプロセスごと止めて失敗扱いにする。ウォッチモードのコマンドにしないこと
 - `test.resultGlobs`: 結果ファイル (JUnit XML または TRX) の場所。trace は実行前にこれらを削除する
 - `test.files`: テストコードの場所 (未定義 ID の検出に使う)
 - `source.files`: 本番コードの場所 (スタブ残りの検出に使う)

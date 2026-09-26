@@ -189,7 +189,26 @@ switch ($Command) {
     'config' {
         $config | ConvertTo-Json -Depth 5
     }
+    'preflight' {
+        # 実装フェーズの開始前に、テストを実行できる環境かを確かめる (環境の不備で全タスクが blocked になるのを防ぐ)
+        $ng = @()
+        if (-not $config.test.command) { $ng += 'test.command が未設定です (.devflow/config.json)' }
+        else {
+            $name = Get-TestCommandName ([string]$config.test.command)
+            Push-Location $root
+            try { $found = if ($name) { Get-Command $name -ErrorAction SilentlyContinue } else { $null } } finally { Pop-Location }
+            if (-not $found) { $ng += "test.command のコマンド ``$name`` が見つかりません (インストールと PATH を確かめる)" }
+        }
+        if (@($config.test.resultGlobs | Where-Object { $_ }).Count -eq 0) { $ng += 'test.resultGlobs が空です' }
+        if ([int]$config.test.timeoutSeconds -le 0) { Write-Output '注意: test.timeoutSeconds が 0 以下のため、テストが終わらなくても止めません' }
+        if ($ng.Count -gt 0) {
+            Write-Output 'テストを実行できる環境ではありません:'
+            $ng | ForEach-Object { Write-Output "- $_" }
+            exit 1
+        }
+        Write-Output "OK (test.command: $($config.test.command))"
+    }
     default {
-        throw "未知のコマンド: $Command (init|show|phase|start-phase|complete-phase|set-phase|impl-status|next-task|task|run|verification-round|add-verification-task|config)"
+        throw "未知のコマンド: $Command (init|show|phase|start-phase|complete-phase|set-phase|impl-status|next-task|task|run|verification-round|add-verification-task|config|preflight)"
     }
 }

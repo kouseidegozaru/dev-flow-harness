@@ -208,46 +208,17 @@ foreach ($d in $defs.Values) {
 $testRun = $null
 $testsByName = [System.Collections.Generic.List[object]]::new()
 
-function Read-TestResults {
-    foreach ($rel in Find-FilesOnDisk $root $config.test.resultGlobs) {
-        $full = Join-DevflowPath $root $rel
-        try { [xml]$x = Read-Utf8 $full } catch { continue }
-        if ($x.DocumentElement.LocalName -eq 'TestRun') {
-            # Visual Studio TRX
-            foreach ($r in $x.GetElementsByTagName('UnitTestResult')) {
-                $testsByName.Add([pscustomobject]@{ name = $r.GetAttribute('testName'); outcome = $r.GetAttribute('outcome').ToLowerInvariant(); file = $rel })
-            }
-        } else {
-            # JUnit XML
-            foreach ($tc in $x.GetElementsByTagName('testcase')) {
-                $outcome = 'passed'
-                foreach ($c in $tc.ChildNodes) {
-                    if ($c.LocalName -in @('failure', 'error')) { $outcome = 'failed' }
-                    elseif ($c.LocalName -eq 'skipped' -and $outcome -eq 'passed') { $outcome = 'skipped' }
-                }
-                $name = "$($tc.GetAttribute('classname')) $($tc.GetAttribute('name'))".Trim()
-                $testsByName.Add([pscustomobject]@{ name = $name; outcome = $outcome; file = $rel })
-            }
-        }
-    }
-}
-
 if ($Mode -in @('full', 'task')) {
     if (-not $config.test.command) {
         Add-Issue 'NO-TEST-COMMAND' '' '.devflow/config.json の test.command が未設定です (詳細設計で設定する)'
     } else {
         if (-not $NoRun) {
-            foreach ($rel in Find-FilesOnDisk $root $config.test.resultGlobs) { Remove-Item -LiteralPath (Join-DevflowPath $root $rel) -Force }
-            Push-Location $root
-            try {
-                $log = Join-DevflowPath $root '.devflow/logs/last-test-run.log'
-                New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
-                & pwsh -NoProfile -Command $config.test.command *> $log
-                $testRun = [pscustomobject]@{ exitCode = $LASTEXITCODE; log = '.devflow/logs/last-test-run.log' }
-            } finally { Pop-Location }
-            if ($testRun.exitCode -ne 0) { Add-Issue 'TESTS-FAILING' '' "テストコマンドが失敗しました (exit $($testRun.exitCode))。ログ: $($testRun.log)" }
+            $r = Invoke-TestCommand $root $config '.devflow/logs/last-test-run.log'
+            $testRun = [pscustomobject]@{ exitCode = $r.ExitCode; timedOut = $r.TimedOut; log = $r.Log }
+            if ($r.TimedOut) { Add-Issue 'TESTS-FAILING' '' "テストが test.timeoutSeconds ($($config.test.timeoutSeconds) 秒) 以内に終わりませんでした。ログ: $($r.Log)" }
+            elseif ($r.ExitCode -ne 0) { Add-Issue 'TESTS-FAILING' '' "テストコマンドが失敗しました (exit $($r.ExitCode))。ログ: $($r.Log)" }
         }
-        Read-TestResults
+        foreach ($tr in Read-TestResultFiles $root $config) { $testsByName.Add($tr) }
         if ($testsByName.Count -eq 0) { Add-Issue 'NO-TEST-RESULTS' '' "テスト結果ファイルが見つかりません (test.resultGlobs: $($config.test.resultGlobs -join ', '))" }
     }
 

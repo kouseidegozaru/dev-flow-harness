@@ -145,7 +145,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 
 | 種類 | 形式 | 条件 (`devflow-commit.ps1` が確かめる) |
 |------|------|----------------------------------------|
-| Red | `test(<TASK-ID>): <メッセージ>` | テストを実行し、失敗すること |
+| Red | `test(<TASK-ID>): <メッセージ>` | テストを実行し、失敗すること。結果ファイルに ID 付きの失敗したテストが必要 (ビルドエラーは Red とみなさない) |
 | Green | `feat(<TASK-ID>): <メッセージ>` | 全テストが成功すること |
 | Refactor | `refactor(<TASK-ID>): <メッセージ>` | 全テストが成功すること |
 | 修正 | `fix(<scope>): <メッセージ>` | 全テストが成功すること |
@@ -203,9 +203,9 @@ scripts/
 
 | スクリプト | 主なコマンド |
 |------------|--------------|
-| `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` |
+| `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
 | `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
-| `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]` |
+| `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]`。test は結果ファイルに ID 付きの失敗したテストがあること、feat / refactor / fix は全テストの成功を確かめる |
 
 ## ID とトレーサビリティ
 
@@ -228,7 +228,8 @@ scripts/
 | `hardLimitPercent` | 65 | この使用率に達したら、作業量にかかわらず引き継ぐ |
 | `maxVerificationRounds` | 3 | 検証ラウンドの上限 |
 | `maxAttemptsPerTest` | 3 | 同じテストでこの回数失敗したら blocked |
-| `test.command` | (詳細設計で設定) | 全テストを実行し結果ファイルを出すコマンド |
+| `test.command` | (詳細設計で設定) | 全テストを実行し結果ファイルを出すコマンド。ウォッチモードにしないこと |
+| `test.timeoutSeconds` | 900 | テストの実行がこの秒数を超えたら止め、失敗として扱う (0 で無制限) |
 | `test.resultGlobs` | TRX / JUnit の典型パス | テスト結果ファイルの場所 |
 | `test.files` / `source.files` | | テストコード / 本番コードの場所 |
 | `stubPatterns` | TODO/FIXME/XXX のコメント、未実装例外など | スタブとして検出するパターン (正規表現) |
