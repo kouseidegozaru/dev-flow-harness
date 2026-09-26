@@ -83,9 +83,15 @@ switch ($Kind) {
 }
 
 # テスト結果ファイル (test.resultGlobs) はテストを実行するたびに作り直される生成物なので、.gitignore になくてもコミットしない
-$exclude = @(Get-ResultExcludePathspecs $config)
-if ($Paths.Count -gt 0) { & git add -- @Paths @exclude } else { & git add -A -- . @exclude }
+# (除外の pathspec を git add に渡すと、結果ファイルの場所が .gitignore 済みのとき git add がエラーになるため、ステージ後に外す)
+if ($Paths.Count -gt 0) { & git add -- @Paths } else { & git add -A }
 if ($LASTEXITCODE -ne 0) { exit 2 }
+$staged = @(& git diff --cached --name-only | Where-Object { $_ })
+$results = @(Select-ByGlobs $staged $config.test.resultGlobs)
+if ($results.Count -gt 0) {
+    & git reset -q -- @results
+    if ($LASTEXITCODE -ne 0) { exit 2 }
+}
 & git diff --cached --quiet
 if ($LASTEXITCODE -eq 0) { Write-Output 'コミットする変更がありません'; exit 1 }
 
