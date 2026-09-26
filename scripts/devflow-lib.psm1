@@ -480,6 +480,19 @@ function Read-TaskIndex([string]$Root, $Config) {
     return $result
 }
 
+function Get-TaskAssignedIds([string]$Root, $Config, [string]$TaskId) {
+    # タスクファイルの「担当ID」。タスクファイルがなければ $null
+    $path = Join-DevflowPath $Root "docs/04-detailed-design/tasks/$TaskId.md"
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    $idre = Get-IdRegex $Config
+    foreach ($tb in Get-MdTables $path) {
+        foreach ($r in $tb.Rows) {
+            if ($r.Cells.Count -ge 2 -and (ConvertTo-PlainCell $r.Cells[0]) -eq '担当ID') { return @(Get-IdsInText (ConvertTo-PlainCell $r.Cells[1]) $idre) }
+        }
+    }
+    return @()
+}
+
 function Set-TaskIndexStatus([string]$Root, $Config, [string]$TaskId, [string]$Status) {
     $path = Get-TasksIndexPath $Root
     $lines = (Read-Utf8 $path) -split "`r?`n"

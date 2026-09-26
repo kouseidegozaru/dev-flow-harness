@@ -147,7 +147,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 
 | 種類 | 形式 | 条件 (`devflow-commit.ps1` が確かめる) |
 |------|------|----------------------------------------|
-| Red | `test(<TASK-ID>): <メッセージ>` | テストを実行し、失敗すること。結果ファイルに ID 付きの失敗したテストが必要 (ビルドエラーは Red とみなさない) |
+| Red | `test(<TASK-ID>): <メッセージ>` | テストを実行し、失敗すること。結果ファイルに、そのタスクの担当 ID を名前に含む失敗したテストが必要 (ビルドエラーや無関係なテストの失敗は Red とみなさない) |
 | Green | `feat(<TASK-ID>): <メッセージ>` | 全テストが成功すること |
 | Refactor | `refactor(<TASK-ID>): <メッセージ>` | 全テストが成功すること |
 | 修正 | `fix(<scope>): <メッセージ>` | 全テストが成功すること |
@@ -207,7 +207,7 @@ scripts/
 |------------|--------------|
 | `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
 | `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
-| `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]`。test は結果ファイルに ID 付きの失敗したテストがあること、feat / refactor / fix は全テストの成功を確かめる |
+| `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]`。test は結果ファイルに担当 ID 付きの失敗したテストがあること、feat / refactor / fix は全テストの成功を確かめる |
 
 ## ID とトレーサビリティ
 

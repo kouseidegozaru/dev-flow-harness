@@ -69,6 +69,19 @@ switch ($Kind) {
             Write-LogTail $r
             exit 1
         }
+        # タスクの Red なら、失敗したテストの中にそのタスクの担当 ID を含むものがあることを確かめる
+        # (新しく書いたテストが実際に失敗していることの確認。無関係なテストの失敗や、テスト名への ID の書き漏れで通さない)
+        $assigned = Get-TaskAssignedIds $root $config $Scope
+        if ($null -ne $assigned -and $assigned.Count -gt 0) {
+            $mine = @($failed | Where-Object { @(Get-IdsInText $_.name $idre | Where-Object { $assigned -contains $_ }).Count -gt 0 })
+            if ($mine.Count -eq 0) {
+                Write-Output "Red コミットを拒否: 失敗したテストに、$Scope の担当 ID ($($assigned -join ', ')) を名前に含むものがありません。"
+                Write-Output "失敗したテスト: $(($failed | Select-Object -First 5 | ForEach-Object { $_.name }) -join '; ')"
+                Write-Output '新しく書いたテストの名前に担当 ID が入っているか、そのテストが実際に失敗しているかを確かめること'
+                exit 1
+            }
+            $failed = $mine
+        }
         Write-Output "Red 確認: テストは失敗しています (exit $($r.ExitCode)、失敗: $(($failed | Select-Object -First 5 | ForEach-Object { $_.name }) -join '; '))"
     }
     { $_ -in @('feat', 'refactor', 'fix') } {
