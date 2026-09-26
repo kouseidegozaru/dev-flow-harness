@@ -1,7 +1,7 @@
 ---
 name: dev-flow
 description: 企画・構想 → 要件定義 → 基本設計 → 詳細設計 → 実装 → 検証 の6フェーズで開発を進めるハーネス。.devflow/state.json から現在フェーズを判定し、該当フェーズの手順書を読み込んで実行する。ユーザーが開発フローの開始・再開・状況確認・フェーズのやり直しを求めたとき、または SessionStart フックが dev-flow の再開を指示したときに使う。
-argument-hint: "[status | redo <phase> | auto]"
+argument-hint: "[status | redo <phase>]"
 ---
 
 # dev-flow ルーター
@@ -17,7 +17,7 @@ argument-hint: "[status | redo <phase> | auto]"
 pwsh -NoProfile -File scripts/devflow-state.ps1 phase
 ```
 
-- `none` と出たら (state.json がない): 引数が `auto` でなければ `pwsh -NoProfile -File scripts/devflow-state.ps1 init` を実行し、企画・構想から始める
+- `none` と出たら (state.json がない): `pwsh -NoProfile -File scripts/devflow-state.ps1 init` を実行し、企画・構想から始める
 - 以下、スクリプトはすべてプロジェクト直下から `pwsh -NoProfile -File scripts/<name>.ps1` で呼ぶ
 
 ## 2. 引数で分岐する
@@ -27,7 +27,6 @@ pwsh -NoProfile -File scripts/devflow-state.ps1 phase
 | なし | 現在フェーズを開始 (または途中から再開) する。下の表の手順書を読む |
 | `status` | `devflow-state.ps1 show` と `devflow-state.ps1 impl-status` の結果を要約して表示するだけで終わる |
 | `redo <phase>` | 指定フェーズからやり直す。影響 (以降のフェーズの成果物が古くなること) を説明し、ユーザーの明示的な承認を得てから `devflow-state.ps1 set-phase <phase>` を実行する。成果物は消さず、やり直すフェーズの手順で更新する |
-| `auto` | 自動ループ (`scripts/devflow-implement`) からの起動。ユーザーに質問しない。現在フェーズが implementation / verification 以外なら何もせず終了する |
 
 ## 3. フェーズの手順書を読む
 
@@ -37,13 +36,13 @@ pwsh -NoProfile -File scripts/devflow-state.ps1 phase
 | requirements | 要件定義 | [phases/02-requirements.md](phases/02-requirements.md) | あり |
 | basic-design | 基本設計 | [phases/03-basic-design.md](phases/03-basic-design.md) | あり |
 | detailed-design | 詳細設計 | [phases/04-detailed-design.md](phases/04-detailed-design.md) | ほぼなし |
-| implementation | 実装 | [phases/05-implementation.md](phases/05-implementation.md) | なし (自動ループ) |
-| verification | 検証 | [phases/06-verification.md](phases/06-verification.md) | なし (自動ループ) |
+| implementation | 実装 | [phases/05-implementation.md](phases/05-implementation.md) | なし (オーケストレーター + 実装担当サブエージェント) |
+| verification | 検証 | [phases/06-verification.md](phases/06-verification.md) | なし (実装に続けて同じセッションで実行) |
 | done | 完了 | — | `docs/verification-report.md` の要点を伝える |
 
-implementation / verification なのに対話セッションで呼ばれた場合 (引数が `auto` でない): 実装を始めず、
-ユーザーに「別ターミナルで `scripts/devflow-implement.sh` (または `pwsh -File scripts/devflow-implement.ps1`) を実行してください」と案内する。
-ユーザーがこのセッションでの実行を明示的に望んだ場合に限り、Bash のバックグラウンド実行でそのスクリプトを起動してよい。
+implementation / verification は、このセッションを **オーケストレーター** として実行する (ユーザーに質問しない)。
+実装そのものは `tdd-implementer` サブエージェントが行い、このセッションはサブエージェントを起動して待つだけ (手順は 05 の手順書)。
+許可の確認で止まらないよう、ユーザーが `--permission-mode bypassPermissions` などで起動していない場合は、開始前にその旨を 1 回だけ伝えてから始める。
 
 フェーズを始めるときは `devflow-state.ps1 start-phase` を実行する (SessionStart フックが「途中まで進んでいる」ことを判別するのに使う)。
 

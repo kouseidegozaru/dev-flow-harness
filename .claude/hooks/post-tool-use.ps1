@@ -1,28 +1,28 @@
-# PostToolUse フック (自動ループ専用)
+# PostToolUse フック (実装担当 tdd-implementer の中だけで動く)
 #
-# ツール実行のたびにコンテキスト使用率を計算して .devflow/context-usage に書き出す。
-# 閾値を超えていたら、セッションを締める指示を Claude に渡す。
-# (-p 実行ではステータスラインが動かないため、使用率の監視はこのフックが主となる)
+# 実装担当のツール実行のたびに、そのサブエージェント自身のコンテキスト使用率を transcript から計算する。
+# 閾値を超えていたら、きりの良いところで引き継ぐよう指示を渡す (additionalContext はサブエージェントに届く)。
 
 $ErrorActionPreference = 'Stop'
+$raw = [Console]::In.ReadToEnd()
+# 実装担当以外 (メイン会話・他のサブエージェント) では何もしない。モジュール読み込みの前に軽く判定する
+if ($raw -notmatch '"agent_type"\s*:\s*"tdd-implementer"') { exit 0 }
+
 Import-Module (Join-Path $PSScriptRoot '../../scripts/devflow-lib.psm1') -Force
-
-if ($env:DEVFLOW_AUTOLOOP -ne '1') { exit 0 }
-
-$in = Read-StdinJson
+$in = $raw | ConvertFrom-Json
 $root = Get-DevflowRoot
 $state = Read-DevflowState $root
-if (-not $state -or $state.phase -notin @('implementation', 'verification')) { exit 0 }
+if (-not $state -or $state.phase -ne 'implementation') { exit 0 }
 $config = Get-DevflowConfig $root
 
-$usage = Get-ContextUsage $root $config $in
+$usage = Get-AgentContextUsage $config $in
 if (-not $usage) { exit 0 }
-Update-LoopBaseTokens $root $usage
-$threshold = [double]$config.contextThresholdPercent
-if (-not (Test-ContextOver $root $config $usage)) { exit 0 }
+$run = Get-ImplementerRun $root ([string]$in.agent_id)
+if (-not $run.baseTokens) { $run.baseTokens = $usage.Tokens; Write-ImplementerRun $root $run }
+if (-not (Test-ContextOver $config $usage $run.baseTokens)) { exit 0 }
 
-$msg = ('[dev-flow] コンテキスト使用率 {0:N0}% (閾値 {1}%)。新しいタスクには着手しないこと。' -f $usage.Percent, $threshold) +
-    '今のタスクがコミット可能な区切りに達したら (または今すぐ中断して)、手順書の「セッションの終え方」に従い、' +
-    '.devflow/handoff.md を更新し、変更をコミットしてから応答を終えること。次のセッションが handoff.md から再開する。'
+$msg = ('[dev-flow] 実装担当のコンテキスト使用率 {0:N0}% (閾値 {1}%)。新しいタスクには着手しないこと。' -f $usage.Percent, $config.contextThresholdPercent) +
+    '今のタスクを完了させるか、コミットできる区切り (Red / Green / Refactor のどれかのコミット) まで進めたら、' +
+    'tdd-implementer の手順「引き継いで終える」に従い、.devflow/handoff.md を更新してコミットし、報告して終了すること。次の実装担当が handoff.md から再開する。'
 Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'PostToolUse'; additionalContext = $msg } }
 exit 0

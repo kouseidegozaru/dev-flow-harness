@@ -7,13 +7,16 @@
   pwsh -NoProfile -File scripts/devflow-state.ps1 show
   pwsh -NoProfile -File scripts/devflow-state.ps1 complete-phase requirements
   pwsh -NoProfile -File scripts/devflow-state.ps1 next-task
+  pwsh -NoProfile -File scripts/devflow-state.ps1 task TASK-003 done        # 完了の条件を確かめてから done にする
   pwsh -NoProfile -File scripts/devflow-state.ps1 task TASK-003 blocked -Reason "..."
+  pwsh -NoProfile -File scripts/devflow-state.ps1 run start                # オーケストレーターの開始 (Stop フックが作業の途中で止まらないようにする)
 #>
 param(
     [Parameter(Position = 0)][string]$Command = 'show',
     [Parameter(Position = 1)][string]$Arg1,
     [Parameter(Position = 2)][string]$Arg2,
-    [string]$Reason = ''
+    [string]$Reason = '',
+    [switch]$Force   # task <ID> done で完了の確認を飛ばす (人が手で状態を直すとき用)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -111,6 +114,22 @@ switch ($Command) {
         # task <TASK-ID> <todo|in_progress|done|blocked> [-Reason ...]
         if (-not $Arg1 -or -not $Arg2) { throw 'task <TASK-ID> <status> の形式で指定してください' }
         if ((Get-TaskStatuses) -notcontains $Arg2) { throw "未知の状態: $Arg2" }
+        if ($Arg2 -eq 'done' -and -not $Force) {
+            # 完了の確認 (オーケストレーターは確認しないので、ここで機械的に保証する):
+            # test(<ID>) と feat(<ID>) のコミットがあり、trace -Mode task (全テスト実行・ID のテスト名・スタブ検索) が exit 0
+            $ng = @()
+            foreach ($k in 'test', 'feat') {
+                $hit = @(& git -C $root log --oneline --fixed-strings --grep "$k($Arg1)" 2>$null | Where-Object { $_ })
+                if ($hit.Count -eq 0) { $ng += "``$k($Arg1)`` のコミットがありません" }
+            }
+            $traceOut = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'devflow-trace.ps1') -Mode task -Task $Arg1 2>&1
+            if ($LASTEXITCODE -ne 0) { $ng += "devflow-trace -Mode task -Task $Arg1 が NG です:`n$(($traceOut | Select-Object -Last 30) -join "`n")" }
+            if ($ng.Count -gt 0) {
+                Write-Output "$Arg1 を done にできません:"
+                $ng | ForEach-Object { Write-Output "- $_" }
+                exit 1
+            }
+        }
         $s = Get-StateOrFail
         Set-TaskIndexStatus $root $config $Arg1 $Arg2
         if ($Arg2 -eq 'in_progress') { $s.implementation.currentTask = $Arg1 }
@@ -124,11 +143,22 @@ switch ($Command) {
         Write-DevflowState $root $s
         Write-Output "$Arg1 → $Arg2"
     }
-    'session' {
-        $s = Get-StateOrFail
-        $s.implementation.sessions = [int]$s.implementation.sessions + 1
-        Write-DevflowState $root $s
-        Write-Output $s.implementation.sessions
+    'run' {
+        # run start: このセッションを実装・検証フェーズのオーケストレーターとして登録する (Stop フックが途中で止まらないようにする)
+        # run stop : 登録を外す
+        $p = Join-DevflowPath $root '.devflow/orchestrator.json'
+        switch ($Arg1) {
+            'start' {
+                $o = [ordered]@{ active = $true; sessionId = ''; startedAt = (Get-Date).ToString('o'); blocks = 0; lastFingerprint = '' }
+                Write-Utf8 $p (($o | ConvertTo-Json -Compress) + "`n")
+                Write-Output 'オーケストレーターを開始しました'
+            }
+            'stop' {
+                if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force }
+                Write-Output 'オーケストレーターを終了しました'
+            }
+            default { throw 'run start | run stop の形式で指定してください' }
+        }
     }
     'verification-round' {
         # 検証ラウンドを 1 進め、上限を超えたら exit 4
@@ -148,6 +178,6 @@ switch ($Command) {
         $config | ConvertTo-Json -Depth 5
     }
     default {
-        throw "未知のコマンド: $Command (init|show|phase|start-phase|complete-phase|set-phase|impl-status|next-task|task|session|verification-round|add-verification-task|config)"
+        throw "未知のコマンド: $Command (init|show|phase|start-phase|complete-phase|set-phase|impl-status|next-task|task|run|verification-round|add-verification-task|config)"
     }
 }

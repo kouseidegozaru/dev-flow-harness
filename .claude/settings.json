@@ -21,13 +21,39 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Agent|Task|Bash|PowerShell|Read",
+        "matcher": "Bash|PowerShell|Read|Edit|Write",
         "hooks": [
           {
             "type": "command",
             "command": "pwsh",
             "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/post-tool-use.ps1"],
             "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "matcher": "tdd-implementer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh",
+            "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/subagent-start.ps1"],
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "tdd-implementer",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "pwsh",
+            "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/subagent-stop.ps1"],
+            "timeout": 60
           }
         ]
       }

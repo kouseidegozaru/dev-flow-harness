@@ -12,7 +12,7 @@ Claude Code 上で **企画・構想 → 要件定義 → 基本設計 → 詳�
 
 | もの | バージョン | 用途 |
 |------|------------|------|
-| Claude Code | 2.1.x (2.1.282 で確認) | スキル、フック、サブエージェント、`claude -p` |
+| Claude Code | 2.1.x (2.1.282 で確認) | スキル、フック、サブエージェント |
 | PowerShell | 7 以降 (`pwsh`) | フック・スクリプト本体 (Windows / macOS / Linux) |
 | git | | コミット、進捗判定 |
 
@@ -48,8 +48,8 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 | 2. 要件定義 | 対話 | `docs/02-requirements/` |
 | 3. 基本設計 | 対話。画面デザインは screen-designer サブエージェントがローカルの HTML で作成し、文章の指示で修正 | `docs/03-basic-design/` |
 | 4. 詳細設計 | ほぼ自律。上流の決定が必要な指摘だけをまとめて確認される | `docs/04-detailed-design/` |
-| 5. 実装 | 完全自動 (外部ループ) | コード、テスト、TDD のコミット |
-| 6. 検証 | 完全自動 (外部ループ) | `docs/traceability.md`、`docs/verification-report.md` |
+| 5. 実装 | 完全自動 (オーケストレーター + 実装担当サブエージェント) | コード、テスト、TDD のコミット |
+| 6. 検証 | 完全自動 (実装に続けて同じセッションで実行) | `docs/traceability.md`、`docs/verification-report.md` |
 
 各対話フェーズの終わりに成果物のドラフトが提示されるので、承認すると `docs/` への保存・コミット・state の更新が行われ、
 **「`/clear` を実行してください」** と案内される。
@@ -65,33 +65,39 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 
 途中の決定事項は `.devflow/decisions/<phase>.md` に決定ツリーとして記録されるので、コンテキストが圧縮・クリアされても続きから再開できる。
 
-### 実装ループを起動する
+### 実装・検証 (完全自動)
 
-詳細設計が終わると案内が出るので、別のターミナルでプロジェクト直下から実行する。
+詳細設計が終わると案内が出るので、許可の確認で止まらないよう `claude --permission-mode bypassPermissions` で起動し直して、
+何か一言 (「続けて」など) を送る。そのセッションが **オーケストレーター** になり、最後まで質問なしで進む。
 
-```bash
-scripts/devflow-implement.sh
-# または
-pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-ContextThreshold 50] [-Model <model>]
+```
+オーケストレーター (このセッション)            実装担当 (tdd-implementer サブエージェント)
+  impl-status を見て実装担当を起動する ───────▶  handoff.md を読む
+  (依頼文は「タスクを進めよ」の 1 行だけ)          next-task → TDD で実装・コミット → task done → 次のタスク …
+                                                  自分のコンテキストが 50% を超えたら、きりの良いところで
+  短い報告を受け取る ◀──────────────────────────  handoff.md を書いてコミットし、終える
+  タスクが残っていれば、新しい実装担当を起動する (handoff.md から再開)
+  全タスクが終わったら検証フェーズ (trace で漏れを調べ、漏れがあれば追加タスクを作って実装担当に戻す)
 ```
 
-- `claude -p "/dev-flow auto"` を繰り返し起動する。各セッションは state.json と `.devflow/handoff.md` を読んで続きから再開する
-- 各タスクは `tdd-implementer` サブエージェントが TDD で実装し、`scripts/devflow-commit.ps1` でコミットする
-  (Red はテストが失敗すること、Green / Refactor は全テストが成功することを、スクリプトが実際にテストを実行して確認する)
-- コンテキスト使用率が閾値 (既定 50%) を超え、かつセッション開始時から一定量 (`minSessionWorkTokens`) 作業していると、handoff.md を書いてコミットし、セッションを切り替える
-- 全タスクが終わると検証フェーズに進み、漏れがあれば追加タスクを作って実装に戻る。漏れゼロ (または残りが blocked のみ) で終了する
-  (検証は機械チェック `devflow-trace.ps1 -Mode full` だけで行う。コードを読んで突き合わせる監査は、トークン消費が大きいため行わない)
-- 終了コード: 0 = 完了 / 2 = フェーズが実装・検証でない / 3 = 進捗なしで停止 / 4 = 最大反復回数に到達 / 5 = 利用上限に到達 (リセット後に再実行すると続きから再開)
-- ログ: `.devflow/logs/loop.log`、各セッションの JSON 出力 `.devflow/logs/session-NNN.json`
+- **オーケストレーター** はタスクの中身・設計・コードを読まず、実装担当を起動して待つだけ。コンテキストがほとんど増えない
+- **実装担当** は 1 体でタスクを次々にこなす (タスクごとに起動し直さない)。タスクごとに `test` → `feat` (→ `refactor`) をコミットする
+  (Red はテストが失敗すること、Green / Refactor は全テストが成功することを、`devflow-commit.ps1` が実際にテストを実行して確認する)
+- タスクの完了は `devflow-state.ps1 task <ID> done` が機械的に確かめる (`test(<ID>)`・`feat(<ID>)` のコミットと `devflow-trace -Mode task`)
+- 実装担当のコンテキスト使用率は、フックが実装担当自身の transcript から測る。閾値 (既定 50%) を超え、かつ開始時から一定量
+  (`minSessionWorkTokens`) 作業していたら引き継がせる。閾値前に終えようとしたら SubagentStop フックが止めて次のタスクへ進ませる
+- 検証は機械チェック `devflow-trace.ps1 -Mode full` だけで行う (コードを読んで突き合わせる監査は、トークン消費が大きいため行わない)。
+  漏れゼロ (または残りが blocked のみ) で phase が done になる
 
-**注意:** 既定では `--permission-mode bypassPermissions` で起動する (無人で git・テスト・ファイル編集を行うため)。
-信頼できるリポジトリで、できればコンテナや専用の作業環境で実行すること。変える場合は `.devflow/config.json` の `claudeArgs` を編集する。
+**注意:** `bypassPermissions` は git・テスト・ファイル編集を確認なしで行う。信頼できるリポジトリで、できればコンテナや専用の作業環境で実行すること。
+許可リストを細かく設定できるなら `acceptEdits` + `permissions.allow` (テストコマンド、`git`、`pwsh -NoProfile -File scripts/devflow-*`) でもよい。
 
 ### 途中から再開する
 
 - **対話フェーズ**: `claude` を起動して `/dev-flow` (または何か一言。SessionStart フックが進行中のフェーズを知らせる)。
   `.devflow/decisions/<phase>.md` から再開する
-- **実装・検証**: `scripts/devflow-implement.sh` をもう一度実行するだけ。in_progress のタスクと handoff.md から続ける
+- **実装・検証**: `claude` を起動して `/dev-flow` (または何か一言)。in_progress のタスクと handoff.md から続ける
+  (利用上限などで止まった場合も同じ。途中の作業はタスクごと・引き継ぎごとにコミットされている)
 - 状況の確認: `/dev-flow status`、または `pwsh -NoProfile -File scripts/devflow-state.ps1 impl-status`
 
 ### フェーズをやり直す
@@ -112,7 +118,7 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
 | 節 | 見るべきこと |
 |----|--------------|
 | 1. 網羅状況 | `devflow-trace -Mode full` の漏れ件数が 0 か。詳細は `docs/traceability.md` (要件 → 設計 → タスク → テストの対応表) |
-| 2. blocked のまま残ったタスク | 理由と「必要な判断」。判断して設計を直したら、タスクを `todo` に戻してループを再実行する |
+| 2. blocked のまま残ったタスク | 理由と「必要な判断」。判断して設計を直したら、タスクを `todo` に戻して `/dev-flow redo implementation` で実装を再開する |
 | 3. 人が確認する項目 | `manual` 種別と `review` 種別の ID (review は実装時に自己確認済み)。人が確認する |
 | 4. 検証で見つかって修正した漏れ | 機械チェックが見つけ、追加タスクで実装した内容 |
 | 5. 未解決の漏れ | 最大ラウンド超過や設計の不備で残ったもの |
@@ -133,11 +139,13 @@ pwsh -NoProfile -File scripts/devflow-implement.ps1 [-MaxIterations 40] [-Contex
   agents/
     design-reviewer.md        # 詳細設計のタスクを実装者目線でレビュー (実装者が止まる・誤る点だけ、1 タスク 2 回まで)
     screen-designer.md        # 画面デザインを HTML などで作成・修正 (文章の指示で修正)
-    tdd-implementer.md        # 1 タスクを TDD で実装 (review 種別の ID も完了時に自己確認)
+    tdd-implementer.md        # 実装担当: タスクを次々に TDD で実装。閾値超えで handoff を書いて終える
   hooks/
-    session-start.ps1         # /clear 後の自動再開、自動ループの再開、compact 後の再読指示
-    stop.ps1                  # 自動ループ: 作業が残っていれば継続、閾値超えなら引き継ぎを強制
-    post-tool-use.ps1         # 自動ループ: コンテキスト使用率の監視と警告
+    session-start.ps1         # /clear 後の自動再開 (実装・検証はオーケストレーターとして開始)、compact 後の再読指示
+    stop.ps1                  # オーケストレーター: 作業が残っていれば応答を終えさせない
+    post-tool-use.ps1         # 実装担当: 自分のコンテキスト使用率を測り、閾値超えを知らせる
+    subagent-start.ps1        # 実装担当: 開始時刻・開始時の使用量の記録を作る
+    subagent-stop.ps1         # 実装担当: 閾値未満なら次のタスクへ進ませ、閾値超えなら引き継ぎが済むまで終えさせない
     statusline.ps1            # 対話セッション: 使用率を .devflow/context-usage に書き出して表示
   settings.json
 scripts/
@@ -145,17 +153,17 @@ scripts/
   devflow-state.ps1           # state.json / tasks/index.md の状態操作 (エージェントに手で書き換えさせない)
   devflow-trace.ps1 (.sh)     # ID の網羅性検証、traceability.md・index.md の ID 一覧の生成
   devflow-commit.ps1          # TDD コミット規約の機械的な強制
-  devflow-implement.ps1 (.sh) # 実装・検証の自動ループ
   devflow-install.ps1         # 対象プロジェクトへの導入
 .devflow/                     # (対象プロジェクトに作られる)
   state.json                  # 現在フェーズ、完了フェーズ、実装・検証の進捗
   config.json                 # テストコマンド、閾値など (詳細設計で設定)
   decisions/<phase>.md        # 対話フェーズの決定ツリー
-  handoff.md                  # セッション間の引き継ぎ
+  handoff.md                  # 実装担当の間の引き継ぎ
   blocked.md                  # 行き詰まったタスクの記録
   verification-log.md         # 検証ラウンドごとの漏れと追加タスク
+  implementer.json            # 実装中の実装担当の記録 (開始時刻・開始時の使用量。git 管理外)
+  orchestrator.json           # オーケストレーターの登録 (git 管理外)
   context-usage               # コンテキスト使用率 (git 管理外)
-  logs/                       # ループのログ (git 管理外)
 ```
 
 依頼時の案からの変更点:
@@ -179,14 +187,11 @@ scripts/
 | キー | 既定値 | 意味 |
 |------|--------|------|
 | `contextWindowTokens` | 200000 | 使用率の分母。1M コンテキストのモデルでも、品質のため 200000 のままを推奨 |
-| `contextThresholdPercent` | 50 | この使用率を超えたらセッションを切り替える |
-| `minSessionWorkTokens` | 40000 | セッション開始時の使用量からこのトークン数以上進むまでは、閾値を超えても切り替えない (起動直後の固定分が閾値に近い環境で、何も進めずに引き継ぎだけを繰り返すのを防ぐ)。`autoCompactPercent` - 5 に達したら作業量にかかわらず切り替える |
-| `maxNoProgress` | 2 | 進捗のないセッションがこの回数続いたら停止 (引き継ぎメモ・セッション数だけの変更は進捗とみなさない) |
-| `maxIterations` | 40 | 自動ループの最大セッション数 |
+| `contextThresholdPercent` | 50 | 実装担当のコンテキスト使用率がこれを超えたら、次の実装担当に引き継ぐ |
+| `minSessionWorkTokens` | 40000 | 実装担当の開始時の使用量からこのトークン数以上進むまでは、閾値を超えても引き継がない (起動直後の固定分が閾値に近い場合に、何も進めずに引き継ぎだけを繰り返すのを防ぐ) |
+| `hardLimitPercent` | 65 | この使用率に達したら、作業量にかかわらず引き継ぐ |
 | `maxVerificationRounds` | 3 | 検証ラウンドの上限 |
 | `maxAttemptsPerTest` | 3 | 同じテストでこの回数失敗したら blocked |
-| `autoCompactPercent` | 70 | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` に渡す値 (閾値より前に自動 compact が走る場合の安全網) |
-| `claudeArgs` | `["--permission-mode","bypassPermissions"]` | `claude -p` に渡す引数 |
 | `test.command` | (詳細設計で設定) | 全テストを実行し結果ファイルを出すコマンド |
 | `test.resultGlobs` | TRX / JUnit の典型パス | テスト結果ファイルの場所 |
 | `test.files` / `source.files` | | テストコード / 本番コードの場所 |
@@ -201,14 +206,13 @@ scripts/
 | 仕組み | 確認した仕様 | 採った設計 |
 |--------|--------------|------------|
 | スキル | `.claude/skills/<name>/SKILL.md`。frontmatter は `name`・`description`・`argument-hint` など。サブディレクトリの補助ファイルを相対リンクで参照できる。`/name` で呼べ、`-p` のプロンプトに `/name` を書いても展開される | SKILL.md はルーターだけにし、フェーズごとの手順書を `phases/` に分けて、必要なものだけ読み込む |
-| SessionStart | `source` は `startup` / `resume` / `clear` / `compact` / `fork`。`hookSpecificOutput.additionalContext` で文脈を注入できる。`initialUserMessage` (最初の発言を自動で送る) は **`-p` 専用** | clear: 次フェーズの開始指示を注入する。compact: 手順書と決定ツリーの再読を指示する。自動ループ: handoff.md を注入する |
-| Stop | `{"decision":"block","reason":...}` で停止をやめさせ、reason を Claude に渡せる。`{"continue":false}` で完全に停止。入力に `stop_hook_active`。**8 回連続でブロックすると強制的に終わる** | 自動ループでだけ動かす。作業が残っていれば続けさせ、閾値超えなら引き継ぎを強制する。同じ状態のまま 3 回止まったら停止を許す (進捗なし) |
-| PostToolUse | `additionalContext` を返せる | 自動ループで、ツール実行のたびに使用率を計算し、閾値超えを知らせる |
-| ステータスライン | stdin の JSON に `context_window.used_percentage`・`context_window_size`・`total_input_tokens`・`current_usage`。`-p` で動くかは記載がない | 対話セッション用。自動ループでの監視はフックで行う (下記) |
-| コンテキスト使用量 | フック入力の `transcript_path` (JSONL) の各 assistant 行に `message.usage` (`input_tokens`・`cache_creation_input_tokens`・`cache_read_input_tokens`) がある。サブエージェントの会話は別ファイル (`subagents/`) | 最新の assistant 行の 3 つの値の合計 ÷ `contextWindowTokens` を使用率とする |
-| 自動 compact | `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE` (1〜100、下げる方向のみ)、`DISABLE_AUTO_COMPACT` | 自動ループで安全網として 70 を設定する。切り替えは compact ではなくセッションの作り直しで行う (クリーンな状態から handoff で再開するため) |
-| ヘッドレス | `claude -p`、`--output-format json` (結果に `session_id`・`total_cost_usd`・`num_turns`・`is_error`・`result`)、`--permission-mode` (`default`/`acceptEdits`/`plan`/`auto`/`dontAsk`/`bypassPermissions`)、`--resume`。`--bare` でなければ、プロジェクトのフック・スキル・エージェントを読み込む | `devflow-implement` が `claude -p "/dev-flow auto" --output-format json` を繰り返し起動する |
-| サブエージェント | `.claude/agents/<name>.md` (frontmatter: `name`・`description`・`tools`・`model` など)。Agent ツールで起動する。`-p` では fork モードが無効。`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1` で常に前面実行になる | 自動ループではこの環境変数を設定し、実装担当の完了を待ってから次に進むようにする |
+| SessionStart | `source` は `startup` / `resume` / `clear` / `compact` / `fork`。`hookSpecificOutput.additionalContext` で文脈を注入できる。`initialUserMessage` (最初の発言を自動で送る) は **`-p` 専用** | clear: 次フェーズの開始指示を注入する (実装・検証はオーケストレーターとして開始)。compact: 手順書と決定ツリー (実装・検証なら状態と handoff) の再読を指示する |
+| Stop | `{"decision":"block","reason":...}` で停止をやめさせ、reason を Claude に渡せる。入力に `stop_hook_active`。**8 回連続でブロックすると強制的に終わる** | オーケストレーターとして登録したセッション (`devflow-state.ps1 run start`) でだけ動かす。作業が残っていれば応答を終えさせない。同じ状態のまま 3 回止まったら停止を許す (進捗なし) |
+| サブエージェント内のフック | ツールのイベント (PreToolUse / PostToolUse) はサブエージェントの中でも動き、入力に `agent_id`・`agent_type` が入る。`transcript_path` はメイン会話のもの。PostToolUse の `additionalContext` はサブエージェントに届く (実機で確認) | PostToolUse は `agent_type` が `tdd-implementer` のときだけ動き、実装担当自身の使用率を測って閾値超えを知らせる |
+| SubagentStart / SubagentStop | matcher はエージェント名。SubagentStop の入力に `agent_id`・`agent_type`・`agent_transcript_path`・`stop_hook_active`・`last_assistant_message`。`{"decision":"block","reason":...}` でサブエージェントの終了をやめさせ、作業を続けさせられる (実機で確認) | SubagentStart で実装担当の記録を作る。SubagentStop で、閾値未満なら次のタスクへ進ませ、閾値超えなら handoff とコミットが済むまで終えさせない |
+| ステータスライン | stdin の JSON に `context_window.used_percentage`・`context_window_size`・`total_input_tokens`・`current_usage` | 対話セッションの使用率の表示用 (実装担当の監視はフックで行う) |
+| コンテキスト使用量 | transcript (JSONL) の各 assistant 行に `message.usage` (`input_tokens`・`cache_creation_input_tokens`・`cache_read_input_tokens`) がある。サブエージェントの会話は `<セッションの transcript と同じ場所>/<session_id>/subagents/agent-<agent_id>.jsonl` (全行 `isSidechain: true`) | 実装担当の transcript の最新の assistant 行の 3 つの値の合計 ÷ `contextWindowTokens` を使用率とする |
+| サブエージェント | `.claude/agents/<name>.md` (frontmatter: `name`・`description`・`tools`・`model` など)。Agent ツールで起動し、前面で起動すれば終わるまで待つ | 実装担当はメイン会話と同じモデル (`model: inherit`)。オーケストレーターは実装担当を前面で起動し、報告を受けたら次を起動する |
 | 画面デザイン | (当初は Claude Design を Artifact ツールの Design 型で操作する方式で作り、動作も確認した。トークン消費が大きく、成果物が claude.ai 上に置かれるため取りやめた) | `screen-designer` サブエージェント (メイン会話と同じモデル) がローカルに HTML などを書き出す (構成は自由)。デザインの質は `references/design-guidelines.md` (デザイン指針と仕上げの確認項目) で担保する。修正は文章で指示し、ブラウザで入口の `designs/index.html` や各ファイルを開いて確認する |
 | フックの実行シェル | Windows の既定は Git Bash。`args` を指定すると exec 形式 (シェルを介さない) になり、`${CLAUDE_PROJECT_DIR}` が引数ごとに展開される | `"command": "pwsh", "args": ["-NoProfile","-File","${CLAUDE_PROJECT_DIR}/.claude/hooks/x.ps1"]` の形にして、OS やシェルに依存しないようにした |
 
@@ -217,6 +221,6 @@ scripts/
 | 依頼内容 | 制約 | 代替案 (実装済み) |
 |----------|------|-------------------|
 | `/clear` 後、スキル名を打たなくても次フェーズが **自動で** 始まる | 対話モードでは SessionStart フックから最初の発言を送れない (`initialUserMessage` は `-p` 専用) | 次フェーズの開始指示を注入しておき、ユーザーが送る **任意の一言** (「続けて」など) を開始の合図にする |
-| ステータスラインの使用率で 50% 超を検知する | ステータスラインは端末の画面表示用で、`-p` で動く保証がない | PostToolUse / Stop フックが transcript の usage から使用率を計算し、`.devflow/context-usage` にも書き出す。ステータスラインも対話セッションでは同じファイルに書く |
-| Stop フックでセッションを終了させる | Stop フックは「止まるのを止める」ことはできるが、止まっていない (作業中の) 会話を途中で切ることはできない | PostToolUse フックがツール実行ごとに閾値超えを知らせ、区切りのよいところで handoff を書いて止まらせる。Stop フックは「引き継ぎが済むまで止まらせない」ことを保証する |
-| 1 セッション内で全タスクを連続処理 | Stop フックのブロックは 8 回連続で強制解除される | 8 タスク程度でセッションが区切られても、外部ループが次のセッションを起動するので問題にならない |
+| ステータスラインの使用率で 50% 超を検知する | ステータスラインはメイン会話の表示用で、サブエージェント (実装担当) の使用率は出ない | フックが実装担当自身の transcript の usage から使用率を計算する |
+| フックで実装担当を終了させる | フックは「終わるのを止める」ことはできるが、作業中のサブエージェントを途中で切ることはできない | PostToolUse フックがツール実行ごとに閾値超えを知らせ、区切りのよいところで handoff を書いて終えさせる。SubagentStop フックは「引き継ぎが済むまで終えさせない」ことを保証する |
+| 1 体の実装担当で閾値まで連続処理 | SubagentStop のブロックが Stop と同じく連続回数で強制解除される可能性がある (Stop は 8 回) | 1 回のブロックで 1 タスク進むので、途中で解除されても、オーケストレーターが新しい実装担当を起動して handoff から続ける |

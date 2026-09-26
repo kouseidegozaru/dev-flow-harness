@@ -86,12 +86,9 @@ function Get-DefaultConfig {
         contextWindowTokens     = 200000
         contextThresholdPercent = 50
         minSessionWorkTokens    = 40000
-        maxIterations           = 40
-        maxNoProgress           = 2
+        hardLimitPercent        = 65
         maxVerificationRounds   = 3
         maxAttemptsPerTest      = 3
-        claudeArgs              = @('--permission-mode', 'bypassPermissions')
-        autoCompactPercent      = 70
         idPrefixes              = @('REQ', 'NFR', 'ARC', 'SCR', 'TRN', 'API', 'ERR', 'EXT', 'DM',
                                     'MOD', 'IF', 'VAL', 'EC', 'DBC', 'BR', 'TASK')
         test                    = [ordered]@{
@@ -433,8 +430,9 @@ function Get-ReadyTask($Tasks) {
 # コンテキスト使用率
 # ---------------------------------------------------------------------------
 
-function Get-TranscriptContextTokens([string]$TranscriptPath) {
-    # transcript (JSONL) の末尾から、メイン会話の最新 assistant 応答の usage を探す。
+function Get-TranscriptContextTokens([string]$TranscriptPath, [switch]$IncludeSidechain) {
+    # transcript (JSONL) の末尾から、最新 assistant 応答の usage を探す。
+    # 既定ではメイン会話の応答だけを見る。サブエージェントの transcript を読むときは -IncludeSidechain を付ける (全行が isSidechain=true)。
     # 入力トークン = input + cache_creation + cache_read (= 次の要求で再送される文脈量)
     if (-not $TranscriptPath -or -not (Test-Path -LiteralPath $TranscriptPath)) { return $null }
     $fs = [System.IO.File]::Open($TranscriptPath, 'Open', 'Read', 'ReadWrite')
@@ -452,7 +450,7 @@ function Get-TranscriptContextTokens([string]$TranscriptPath) {
         $l = $lines[$i]
         if ($l -notmatch '"type":"assistant"' -or $l -notmatch '"usage"') { continue }
         try { $o = $l | ConvertFrom-Json } catch { continue }
-        if ($o.PSObject.Properties['isSidechain'] -and $o.isSidechain) { continue }
+        if (-not $IncludeSidechain -and $o.PSObject.Properties['isSidechain'] -and $o.isSidechain) { continue }
         $u = $o.message.usage
         if (-not $u) { continue }
         $sum = 0
@@ -499,34 +497,75 @@ function Get-ContextUsage([string]$Root, $Config, $HookInput) {
     return $null
 }
 
-function Test-ContextOver([string]$Root, $Config, $Usage) {
-    # セッションを締めるべきかを判定する。
-    # 閾値だけで判定すると、起動直後の固定分 (スキル・ツール定義・引き継ぎメモ) が閾値に近い環境では
-    # 何も進めないまま引き継ぎだけを繰り返す。そこで、セッション開始時の使用量 (最初に測った値) から
-    # minSessionWorkTokens 以上進んでいることも条件にする。
-    # ただし autoCompactPercent - 5 に達したら (自動 compact の直前)、作業量にかかわらず締める。
+function Get-AgentTranscriptPath($HookInput) {
+    # サブエージェントの transcript のパス。SubagentStop は agent_transcript_path を持つ。
+    # ツールのイベント (PostToolUse など) は agent_id だけなので、<セッションの transcript と同じ場所>/<session_id>/subagents/agent-<agent_id>.jsonl を組み立てる
+    if (-not $HookInput) { return $null }
+    if ($HookInput.PSObject.Properties['agent_transcript_path'] -and $HookInput.agent_transcript_path) { return [string]$HookInput.agent_transcript_path }
+    if (-not ($HookInput.PSObject.Properties['agent_id'] -and $HookInput.agent_id)) { return $null }
+    if (-not ($HookInput.PSObject.Properties['transcript_path'] -and $HookInput.transcript_path)) { return $null }
+    $dir = Split-Path -Parent ([string]$HookInput.transcript_path)
+    return (Join-Path $dir ("{0}/subagents/agent-{1}.jsonl" -f $HookInput.session_id, $HookInput.agent_id))
+}
+
+function Get-AgentContextUsage($Config, $HookInput) {
+    # サブエージェント自身のコンテキスト使用量 (最新の応答の入力トークン)
+    $tokens = Get-TranscriptContextTokens (Get-AgentTranscriptPath $HookInput) -IncludeSidechain
+    if ($null -eq $tokens) { return $null }
+    $window = [double]$Config.contextWindowTokens
+    $pct = if ($window -gt 0) { $tokens / $window * 100 } else { 0 }
+    return [pscustomobject]@{ Percent = $pct; Tokens = $tokens; Window = $window; Source = 'agent-transcript' }
+}
+
+function Test-ContextOver($Config, $Usage, $BaseTokens) {
+    # 引き継ぐべきかを判定する。
+    # 閾値だけで判定すると、起動直後の固定分が閾値に近い環境では何も進めないまま引き継ぎだけを繰り返す。
+    # そこで、開始時の使用量 ($BaseTokens) から minSessionWorkTokens 以上進んでいることも条件にする。
+    # ただし hardLimitPercent に達したら、作業量にかかわらず引き継ぐ。
     if (-not $Usage) { return $false }
     $threshold = [double]$Config.contextThresholdPercent
     if ($Usage.Percent -lt $threshold) { return $false }
-    $hard = if ($Config.autoCompactPercent) { [double]$Config.autoCompactPercent - 5 } else { 90 }
+    $hard = if ($Config.Contains('hardLimitPercent') -and $Config.hardLimitPercent) { [double]$Config.hardLimitPercent } else { 65 }
     if ($Usage.Percent -ge $hard) { return $true }
     $minWork = if ($Config.Contains('minSessionWorkTokens')) { [double]$Config.minSessionWorkTokens } else { 0 }
-    $loopPath = Join-DevflowPath $Root '.devflow/loop-session.json'
-    if ($minWork -le 0 -or -not (Test-Path -LiteralPath $loopPath)) { return $true }
-    try { $loop = Read-Utf8 $loopPath | ConvertFrom-Json -AsHashtable } catch { return $true }
-    if (-not $loop.Contains('baseTokens') -or -not $loop.baseTokens) { return $true }
-    return (($Usage.Tokens - [double]$loop.baseTokens) -ge $minWork)
+    if ($minWork -le 0 -or -not $BaseTokens) { return $true }
+    return (($Usage.Tokens - [double]$BaseTokens) -ge $minWork)
 }
 
-function Update-LoopBaseTokens([string]$Root, $Usage) {
-    # 自動ループのセッションで最初に測った使用量を「開始時の使用量」として記録する (Test-ContextOver が使う)
-    if (-not $Usage) { return }
-    $loopPath = Join-DevflowPath $Root '.devflow/loop-session.json'
-    if (-not (Test-Path -LiteralPath $loopPath)) { return }
-    try { $loop = Read-Utf8 $loopPath | ConvertFrom-Json -AsHashtable } catch { return }
-    if ($loop.Contains('baseTokens') -and $loop.baseTokens) { return }
-    $loop.baseTokens = $Usage.Tokens
-    Write-Utf8 $loopPath (($loop | ConvertTo-Json -Compress) + "`n")
+# ---------------------------------------------------------------------------
+# 実装担当 (tdd-implementer) の実行記録 .devflow/implementer.json
+#   agentId / startedAt / baseTokens (最初に測った使用量) / blocks / lastFingerprint
+# ---------------------------------------------------------------------------
+
+function Read-ImplementerRun([string]$Root) {
+    $p = Join-DevflowPath $Root '.devflow/implementer.json'
+    if (-not (Test-Path -LiteralPath $p)) { return $null }
+    try { return (Read-Utf8 $p | ConvertFrom-Json -AsHashtable) } catch { return $null }
+}
+
+function Write-ImplementerRun([string]$Root, $Run) {
+    Write-Utf8 (Join-DevflowPath $Root '.devflow/implementer.json') (($Run | ConvertTo-Json -Compress) + "`n")
+}
+
+function New-ImplementerRun([string]$Root, [string]$AgentId) {
+    $run = [ordered]@{ agentId = $AgentId; startedAt = (Get-Date).ToString('o'); baseTokens = $null; blocks = 0; lastFingerprint = '' }
+    Write-ImplementerRun $Root $run
+    return $run
+}
+
+function Get-ImplementerRun([string]$Root, [string]$AgentId) {
+    # 記録がない、または別の実装担当の記録なら作り直す (SubagentStart フックが動かなかった場合の保険)
+    $run = Read-ImplementerRun $Root
+    if (-not $run -or [string]$run.agentId -ne $AgentId) { $run = New-ImplementerRun $Root $AgentId }
+    return $run
+}
+
+function Get-ProgressFingerprint([string]$Root) {
+    # 進捗の指紋: HEAD とタスク一覧 (状態欄)
+    $parts = @((& git -C $Root rev-parse HEAD 2>$null))
+    $p = Join-DevflowPath $Root 'docs/04-detailed-design/tasks/index.md'
+    if (Test-Path -LiteralPath $p) { $parts += (Get-FileHash -LiteralPath $p -Algorithm SHA1).Hash }
+    return ($parts -join ':')
 }
 
 Export-ModuleMember -Function *

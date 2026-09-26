@@ -2,7 +2,7 @@
 #
 # Claude Code から渡される JSON の context_window.used_percentage を .devflow/context-usage に
 # 書き出し、フェーズとコンテキスト使用率を 1 行で表示する。
-# (対話セッション用。-p の自動ループでは PostToolUse / Stop フックが transcript から計算する)
+# (対話セッションの表示用。実装担当 (サブエージェント) の使用率は PostToolUse / SubagentStop フックが transcript から計算する)
 
 $ErrorActionPreference = 'Stop'
 try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch {}

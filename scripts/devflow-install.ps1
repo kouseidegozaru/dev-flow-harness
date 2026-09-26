@@ -37,7 +37,8 @@ Copy-Item2 '.claude/skills/dev-flow'
 if (-not (Test-Path -LiteralPath (Join-Path $dst '.gitattributes'))) { Copy-Item2 '.gitattributes' } elseif (-not (Select-String -LiteralPath (Join-Path $dst '.gitattributes') -Pattern '*.sh' -SimpleMatch -Quiet)) { Add-Content -LiteralPath (Join-Path $dst '.gitattributes') -Value '*.sh text eol=lf'; Write-Output 'update: .gitattributes' }
 foreach ($a in 'design-reviewer', 'screen-designer', 'tdd-implementer') { Copy-Item2 ".claude/agents/$a.md" }
 # 廃止したファイル (以前の版で導入されたもの) を消す
-foreach ($old in '.claude/agents/implementation-auditor.md', 'scripts/devflow-audit.ps1', '.devflow/audit-plan.json') {
+foreach ($old in '.claude/agents/implementation-auditor.md', 'scripts/devflow-audit.ps1', '.devflow/audit-plan.json',
+                 'scripts/devflow-implement.ps1', 'scripts/devflow-implement.sh', '.devflow/loop-session.json') {
     $op = Join-Path $dst $old
     if ($Force -and (Test-Path -LiteralPath $op)) { Remove-Item -LiteralPath $op -Force; Write-Output "remove (廃止): $old" }
 }
@@ -56,10 +57,10 @@ if (Test-Path -LiteralPath $settingsPath) {
     foreach ($ev in $ours.hooks.Keys) {
         # if 式の出力は 1 要素の配列を展開してしまうため、外側を @() で包んで常に配列にする
         $existing = @(if ($theirs.hooks.Contains($ev)) { $theirs.hooks[$ev] })
-        $json = ($existing | ConvertTo-Json -Depth 10)
         foreach ($entry in $ours.hooks[$ev]) {
-            $script = [string]$entry.hooks[0].args[-1]
-            if ($json -and $json.Contains([System.IO.Path]::GetFileName($script))) { continue }   # 導入済み
+            # dev-flow のフックが導入済みなら、その項目を最新の定義 (matcher など) で置き換える
+            $name = [System.IO.Path]::GetFileName([string]$entry.hooks[0].args[-1])
+            $existing = @($existing | Where-Object { -not (($_ | ConvertTo-Json -Depth 10 -Compress).Contains("/.claude/hooks/$name")) })
             $existing += $entry
         }
         $theirs.hooks[$ev] = $existing
@@ -78,7 +79,8 @@ if (Test-Path -LiteralPath $settingsPath) {
 $ignore = @(
     '# dev-flow の一時ファイル',
     '.devflow/context-usage',
-    '.devflow/loop-session.json',
+    '.devflow/implementer.json',
+    '.devflow/orchestrator.json',
     '.devflow/logs/',
     '.devflow/trace-*.json'
 )

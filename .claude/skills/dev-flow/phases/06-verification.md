@@ -1,6 +1,6 @@
 # フェーズ 6: 検証 (完全自動)
 
-実装ループの最後に自動で実行する。**ユーザーには質問しない。**
+実装フェーズに続けて、同じオーケストレーターのセッションで自動で実行する。**ユーザーには質問しない。**
 設計で決めたことがすべて実装されているかを機械チェック (`devflow-trace.ps1 -Mode full`) で確認し、漏れがあれば追加タスクにして実装フェーズに戻す。
 
 コードを読んで突き合わせる監査は行わない (トークン消費が大きいため)。`review` 種別の ID は、実装時に `tdd-implementer` が
@@ -54,8 +54,8 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 3. `devflow-trace.ps1 -Mode design` が exit 0 であることを確かめる (追加タスクの書式の確認)
 4. `.devflow/verification-log.md` の「## ラウンド <r>」節に、見つけた漏れと追加タスクを追記する (最終レポートの材料)
 5. `devflow-commit.ps1 -Kind docs -Scope verification -Message "検証ラウンド <r>: 追加タスク <n> 件"`
-6. `devflow-state.ps1 set-phase implementation` で実装フェーズに戻し、[05-implementation.md](05-implementation.md) に従って追加タスクを実装する。
-   実装フェーズが終わると再びこの検証フェーズに戻る
+6. `devflow-state.ps1 set-phase implementation` で実装フェーズに戻し、[05-implementation.md](05-implementation.md) の手順 3 から続けて、
+   実装担当に追加タスクを実装させる。実装フェーズが終わると再びこの検証フェーズに戻る
 
 漏れが 0 件 (追加タスクにするものがない) なら次へ。
 
@@ -74,9 +74,10 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 ```bash
 pwsh -NoProfile -File scripts/devflow-state.ps1 complete-phase verification
 pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind docs -Scope verification -Message "検証レポート"
+pwsh -NoProfile -File scripts/devflow-state.ps1 run stop
 ```
 
-phase が `done` になり、外部ループは終了する。
+phase が `done` になる。ユーザーに最終レポートの要点 (漏れ・blocked・人が確認する項目) を伝えて終える。
 
 ## 完了条件
 
@@ -84,7 +85,6 @@ phase が `done` になり、外部ループは終了する。
 - [ ] `docs/verification-report.md` に上の 5 項目がある
 - [ ] phase が `done` になり、コミット済み
 
-## セッションの終え方
+## コンテキストが圧縮されたとき
 
-[05-implementation.md の「セッションの終え方」](05-implementation.md#セッションの終え方) と同じ。
-handoff.md には検証ラウンド番号と、どの手順まで終えたかを書く。
+会話の記憶に頼らず、`.devflow/verification-log.md` と `devflow-state.ps1 show` (検証ラウンド数) から、どの手順まで終えたかを確かめて続ける。
