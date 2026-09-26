@@ -26,7 +26,7 @@ pwsh -NoProfile -File scripts/devflow-state.ps1 phase
 |------|------|
 | なし | 現在フェーズを開始 (または途中から再開) する。下の表の手順書を読む |
 | `status` | `devflow-state.ps1 show` と `devflow-state.ps1 impl-status` の結果を要約して表示するだけで終わる |
-| `redo <phase>` | 指定フェーズからやり直す。影響 (以降のフェーズの成果物が古くなること) を説明し、ユーザーの明示的な承認を得てから `devflow-state.ps1 set-phase <phase>` を実行する。成果物は消さず、やり直すフェーズの手順で更新する |
+| `redo <phase>` | 指定フェーズからやり直す。影響 (以降のフェーズの成果物が古くなること) を説明し、ユーザーの明示的な承認を得てから `devflow-state.ps1 set-phase <phase>` を実行する (検証ラウンド数と追加タスクの記録は初期化される)。成果物は消さず、やり直すフェーズの手順で更新する |
 
 ## 3. フェーズの手順書を読む
 

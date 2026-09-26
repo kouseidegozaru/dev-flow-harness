@@ -124,7 +124,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 /dev-flow redo requirements
 ```
 
-影響の説明と確認のあと、`devflow-state.ps1 set-phase <phase>` で指定フェーズに戻る。成果物は消さず、そのフェーズの手順で更新する。
+影響の説明と確認のあと、`devflow-state.ps1 set-phase <phase>` で指定フェーズに戻る (検証ラウンド数と追加タスクの記録は初期化される)。成果物は消さず、そのフェーズの手順で更新する。
 やり直したフェーズより後の成果物は古くなるので、以降のフェーズも順に通し直す (`devflow-trace` が不整合を検出する)。
 
 特定のタスクだけやり直す場合: `pwsh -NoProfile -File scripts/devflow-state.ps1 task TASK-007 todo`
@@ -203,7 +203,7 @@ scripts/
 
 | スクリプト | 主なコマンド |
 |------------|--------------|
-| `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase>` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` |
+| `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` |
 | `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
 | `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]` |
 

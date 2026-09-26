@@ -16,7 +16,8 @@ param(
     [Parameter(Position = 1)][string]$Arg1,
     [Parameter(Position = 2)][string]$Arg2,
     [string]$Reason = '',
-    [switch]$Force   # task <ID> done で完了の確認を飛ばす (人が手で状態を直すとき用)
+    [switch]$Force,             # task <ID> done で完了の確認を飛ばす (人が手で状態を直すとき用)
+    [switch]$KeepVerification   # set-phase で検証ラウンドの記録を残す (検証フェーズから追加タスクの実装に戻るとき用)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -98,6 +99,13 @@ switch ($Command) {
         $s.completedPhases = @(@($s.completedPhases) | Where-Object { [Array]::IndexOf($order, $_) -lt $idx })
         $s.phase = $Arg1
         $s.phaseStarted = $false
+        if ($KeepVerification) {
+            # 検証ラウンドを閉じる (次の verification-round で新しいラウンドになる)
+            $s.verification.roundOpen = $false
+        } else {
+            # 人によるやり直し: 検証の記録を初期化する (前回のラウンド数を持ち越すと、上限で即座に打ち切られるため)
+            $s.verification = [ordered]@{ round = 0; roundOpen = $false; addedTasks = @() }
+        }
         Write-DevflowState $root $s
         Write-Output "phase を $Arg1 に設定しました"
     }
@@ -161,10 +169,14 @@ switch ($Command) {
         }
     }
     'verification-round' {
-        # 検証ラウンドを 1 進め、上限を超えたら exit 4
+        # 検証ラウンドを 1 進め、上限を超えたら exit 4。
+        # ラウンドの途中 (set-phase -KeepVerification で閉じる前) に再実行しても進めない (再開時に数え直さないため)
         $s = Get-StateOrFail
-        $s.verification.round = [int]$s.verification.round + 1
-        Write-DevflowState $root $s
+        if (-not $s.verification.roundOpen) {
+            $s.verification.round = [int]$s.verification.round + 1
+            $s.verification.roundOpen = $true
+            Write-DevflowState $root $s
+        }
         Write-Output $s.verification.round
         if ($s.verification.round -gt [int]$config.maxVerificationRounds) { exit 4 }
     }

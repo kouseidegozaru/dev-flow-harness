@@ -150,6 +150,7 @@ function New-DevflowState {
         }
         verification    = [ordered]@{
             round       = 0
+            roundOpen   = $false
             addedTasks  = @()
             lastResult  = $null
         }
