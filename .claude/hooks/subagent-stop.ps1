@@ -8,6 +8,11 @@
 # 同じ状態のまま 3 回止めた場合 (進捗なし) は終了を許可し、オーケストレーターに判断を任せる。
 
 $ErrorActionPreference = 'Stop'
+# 例外で終わると見張りが黙って消えるため、理由を人に知らせてから終了を許可する
+trap {
+    [Console]::Out.Write((@{ systemMessage = "dev-flow: SubagentStop フックでエラーが起きたため、今回は見張りを行いません: $($_.Exception.Message)" } | ConvertTo-Json -Compress -EscapeHandling EscapeNonAscii))
+    exit 0
+}
 Import-Module (Join-Path $PSScriptRoot '../../scripts/devflow-lib.psm1') -Force
 
 $in = Read-StdinJson

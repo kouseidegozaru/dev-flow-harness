@@ -10,6 +10,11 @@
 # 同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許可する。
 
 $ErrorActionPreference = 'Stop'
+# 例外で終わると見張りが黙って消えるため、理由を人に知らせてから終了を許可する
+trap {
+    [Console]::Out.Write((@{ systemMessage = "dev-flow: Stop フックでエラーが起きたため、今回は見張りを行いません: $($_.Exception.Message)" } | ConvertTo-Json -Compress -EscapeHandling EscapeNonAscii))
+    exit 0
+}
 Import-Module (Join-Path $PSScriptRoot '../../scripts/devflow-lib.psm1') -Force
 
 $in = Read-StdinJson
@@ -37,6 +42,8 @@ function Block([string]$Reason) {
     $orch.lastFingerprint = $fp
     Write-Utf8 $orchPath (($orch | ConvertTo-Json -Compress) + "`n")
     if ([int]$orch.blocks -gt 2) {
+        $orch.active = $false
+        Write-Utf8 $orchPath (($orch | ConvertTo-Json -Compress) + "`n")
         Write-HookJson @{ systemMessage = 'dev-flow: 進捗がないまま停止が繰り返されたため、オーケストレーターを止めます (`/dev-flow` で再開できます)' }
         exit 0
     }
