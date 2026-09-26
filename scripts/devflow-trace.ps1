@@ -192,7 +192,8 @@ foreach ($d in $defs.Values) {
             }
         }
         'detailed' {
-            if (@($d.upstream | Where-Object { $defs.Contains($_) }).Count -eq 0) {
+            # 同じ詳細設計の ID だけを上流に書いても、上位の決定とのつながりにはならないので数えない
+            if (@($d.upstream | Where-Object { $defs.Contains($_) -and $defs[$_].layer -in @('basic', 'requirement') }).Count -eq 0) {
                 Add-Issue 'NO-UPSTREAM' $d.id '「上流」に基本設計 ID (または要件 ID) がありません' $d.where
             }
         }
