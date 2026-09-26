@@ -99,8 +99,12 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode task -Task <TASK-ID>
 
 blocked にする手順:
 
-1. 途中の変更は、テストが通っていれば feat、通っていなければ `devflow-commit.ps1 -Kind chore -Scope <TASK-ID> -Message "WIP (blocked)"` でコミットする
-2. `devflow-state.ps1 task <TASK-ID> blocked -Reason "<試したこと / 失敗の内容 / 必要な判断・設計の修正案>"`
+1. 未コミットの変更があれば `devflow-commit.ps1 -Kind chore -Scope <TASK-ID> -Message "WIP (blocked)"` でコミットする
+   (未コミットの変更が残っていると、次の手順が拒否する)
+2. `devflow-state.ps1 task <TASK-ID> blocked -Reason "<試したこと / 失敗の内容 / 必要な判断・設計の修正案>"`。
+   このコマンドは、タスク開始以降のこのタスクのコミット (と `chore(handoff)`) を取り消す `revert(<TASK-ID>)` コミットを作り、
+   全テストが通る状態に戻す (失敗するテストが残ると、後続のタスクが Green にできなくなるため)。
+   取り消したコミットと復元方法は `.devflow/blocked.md` に記録されるので、作業は失われない。取り消しを自分で戻さないこと
 3. `devflow-commit.ps1 -Kind chore -Scope <TASK-ID> -Message "blocked として記録"`
 
 ## 引き継いで終える (コンテキストが閾値を超えたとき)

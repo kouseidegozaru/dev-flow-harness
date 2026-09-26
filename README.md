@@ -104,7 +104,8 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 - 実装担当のコンテキスト使用率はフックが実装担当自身の transcript から測る。閾値 (`contextThresholdPercent`、既定 50%) を超えたら、
   タスクの完了またはコミットできる区切りで `handoff.md` を書いて終える。閾値の手前で終えようとしたら、フックが止めて次のタスクへ進ませる
 - タスクの完了は `devflow-state.ps1 task <ID> done` が機械的に確かめる (`test(<ID>)`・`feat(<ID>)` のコミットがあり、`devflow-trace -Mode task` が通ること)
-- 同じテストで `maxAttemptsPerTest` 回失敗した、設計どおりでは実装できない、設計にない判断が必要、のいずれかに当たったタスクは blocked として記録し、依存しない次のタスクへ進む
+- 同じテストで `maxAttemptsPerTest` 回失敗した、設計どおりでは実装できない、設計にない判断が必要、のいずれかに当たったタスクは blocked として記録し、依存しない次のタスクへ進む。
+  blocked にするとき、そのタスクの変更は `revert(<TASK-ID>)` コミットで取り消され、全テストが通る状態に戻る (失敗するテストが残って後続のタスクまで Green にできなくなるのを防ぐ。取り消したコミットと復元方法は `.devflow/blocked.md` に残る)
 - **検証** は `devflow-trace.ps1 -Mode full` (全テスト実行・スタブ検索・ID の網羅性) で行う。漏れがあれば追加タスク `TASK-V<ラウンド>-<連番>` を作って実装に戻し、
   漏れがなくなる (または残りが blocked だけになる) か `maxVerificationRounds` に達したら、最終レポートを書いて phase を `done` にする
 
@@ -136,7 +137,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 | 節 | 見るべきこと |
 |----|--------------|
 | 1. 網羅状況 | `devflow-trace -Mode full` の漏れ件数が 0 か。詳細は `docs/traceability.md` (要件 → 設計 → タスク → テストの対応表) |
-| 2. blocked のまま残ったタスク | 理由と「必要な判断」。判断して設計を直したら、タスクを `todo` に戻して `/dev-flow redo implementation` で実装を再開する |
+| 2. blocked のまま残ったタスク | 理由と「必要な判断」。判断して設計を直したら、タスクを `todo` に戻して `/dev-flow redo implementation` で実装を再開する。途中までの作業を生かすなら、blocked.md にある `git revert <取り消しコミット>` で先に復元する |
 | 3. 人が確認する項目 | `manual` 種別と `review` 種別の ID (review は実装担当が実装時に自己確認済み) |
 | 4. 検証で見つかって修正した漏れ | 機械チェックが見つけ、追加タスクで実装した内容 |
 | 5. 未解決の漏れ | 最大ラウンド超過や設計の不備で残ったもの |

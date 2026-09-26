@@ -33,6 +33,37 @@ function Get-StateOrFail {
     return $s
 }
 
+function Undo-TaskCommits([string]$TaskId, [string]$Base) {
+    # blocked にするタスクの変更を取り消し、全テストが通る状態に戻す (失敗するテストが残ると、後続タスクが全部 Green にできなくなるため)。
+    # タスク開始時点 ($Base) 以降の `<kind>(<TaskId>):` と `chore(handoff):` のコミットを新しい順に逆適用し、1 つのコミットにする
+    # (作業途中の引き継ぎは chore(handoff) に入る。作業中のタスクは常に 1 件なので、その中身はこのタスクの変更だけ)。
+    # .devflow/ と docs/ (状態・引き継ぎメモ・タスク一覧) は戻さない。戻り値: blocked.md に書く説明
+    if (-not $Base) { return '作業の取り消し: タスク開始時点のコミットが記録されていないため、行っていない (失敗するテストが残っていれば人が戻すこと)' }
+    $pat = '^((test|feat|refactor|fix|chore)\(' + [regex]::Escape($TaskId) + '\)|chore\(handoff\)):'
+    $commits = @(& git -C $root log --format='%H %s' "$Base..HEAD" | Where-Object { $_ -and ($_.Substring(41) -match $pat) } | ForEach-Object { $_.Substring(0, 40) })
+    if ($commits.Count -eq 0) { return '作業の取り消し: 取り消すコミットはなかった' }
+    $patch = Join-DevflowPath $root '.devflow/logs/blocked-revert.patch'
+    New-Item -ItemType Directory -Force -Path (Split-Path $patch) | Out-Null
+    foreach ($h in $commits) {
+        & git -C $root diff --binary "--output=$patch" "$h^" $h -- . ':(exclude).devflow' ':(exclude)docs'
+        if ((Get-Item -LiteralPath $patch).Length -eq 0) { continue }
+        & git -C $root apply -R --index $patch
+        if ($LASTEXITCODE -ne 0) {
+            & git -C $root reset -q --hard HEAD
+            Remove-Item -LiteralPath $patch -Force
+            return "作業の取り消し: コミット $($h.Substring(0, 7)) を逆適用できなかったため、行っていない (失敗するテストが残っていれば人が戻すこと)"
+        }
+    }
+    Remove-Item -LiteralPath $patch -Force
+    & git -C $root diff --cached --quiet
+    if ($LASTEXITCODE -eq 0) { return '作業の取り消し: 取り消す変更はなかった' }
+    & git -C $root commit -q -m "revert(${TaskId}): blocked のため、このタスクの変更を取り消す"
+    if ($LASTEXITCODE -ne 0) { throw '取り消しのコミットに失敗しました' }
+    $rev = (& git -C $root rev-parse --short HEAD).Trim()
+    $list = ($commits | ForEach-Object { $_.Substring(0, 7) }) -join ', '
+    return "作業の取り消し: このタスクのコミット $($commits.Count) 件 ($list) を $rev で取り消した。作業を復元するには ``git revert $rev``"
+}
+
 function Get-ImplStatus {
     $tasks = @(Read-TaskIndex $root $config)
     $ready = Get-ReadyTask $tasks
@@ -105,6 +136,7 @@ switch ($Command) {
         } else {
             # 人によるやり直し: 検証の記録を初期化する (前回のラウンド数を持ち越すと、上限で即座に打ち切られるため)
             $s.verification = [ordered]@{ round = 0; roundOpen = $false; addedTasks = @() }
+            $s.implementation.taskBase = [ordered]@{}
         }
         Write-DevflowState $root $s
         Write-Output "phase を $Arg1 に設定しました"
@@ -139,14 +171,31 @@ switch ($Command) {
             }
         }
         $s = Get-StateOrFail
+        # タスク開始時点のコミット (blocked にしたとき、ここまで戻す)
+        if (-not $s.implementation.Contains('taskBase') -or $null -eq $s.implementation.taskBase) { $s.implementation.taskBase = [ordered]@{} }
+        $undoNote = ''
+        if ($Arg2 -eq 'blocked') {
+            $dirty = @(& git -C $root status --porcelain | Where-Object { $_ })
+            if ($dirty.Count -gt 0) {
+                Write-Output "$Arg1 を blocked にできません: 未コミットの変更があります。先に ``devflow-commit.ps1 -Kind chore -Scope $Arg1 -Message ""WIP (blocked)""`` でコミットすること"
+                exit 1
+            }
+            $undoNote = Undo-TaskCommits $Arg1 ([string]$s.implementation.taskBase[$Arg1])
+        }
         Set-TaskIndexStatus $root $config $Arg1 $Arg2
-        if ($Arg2 -eq 'in_progress') { $s.implementation.currentTask = $Arg1 }
-        elseif ($s.implementation.currentTask -eq $Arg1) { $s.implementation.currentTask = $null }
+        if ($Arg2 -eq 'in_progress') {
+            $s.implementation.currentTask = $Arg1
+            if (-not $s.implementation.taskBase[$Arg1]) { $s.implementation.taskBase[$Arg1] = (& git -C $root rev-parse HEAD).Trim() }
+        } else {
+            if ($s.implementation.currentTask -eq $Arg1) { $s.implementation.currentTask = $null }
+            if ($s.implementation.taskBase.Contains($Arg1)) { $s.implementation.taskBase.Remove($Arg1) }
+        }
         if ($Arg2 -eq 'blocked') {
             $p = Join-DevflowPath $root '.devflow/blocked.md'
             $text = if (Test-Path -LiteralPath $p) { Read-Utf8 $p } else { "# 行き詰まったタスクの記録`n" }
-            $text += "`n## $Arg1 ($((Get-Date).ToString('yyyy-MM-dd HH:mm')))`n`n$Reason`n"
+            $text += "`n## $Arg1 ($((Get-Date).ToString('yyyy-MM-dd HH:mm')))`n`n$Reason`n`n$undoNote`n"
             Write-Utf8 $p $text
+            Write-Output $undoNote
         }
         Write-DevflowState $root $s
         Write-Output "$Arg1 → $Arg2"

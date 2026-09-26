@@ -147,6 +147,7 @@ function New-DevflowState {
         phaseStarted    = $false
         implementation  = [ordered]@{
             currentTask = $null
+            taskBase    = [ordered]@{}   # タスク ID → 開始時点のコミット (blocked にしたとき、ここまで戻す)
             sessions    = 0
         }
         verification    = [ordered]@{
