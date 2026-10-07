@@ -1,0 +1,17 @@
+{
+  "contextWindowTokens": 200000,
+  "contextThresholdPercent": 50,
+  "minSessionWorkTokens": 40000,
+  "hardLimitPercent": 65,
+  "maxVerificationRounds": 3,
+  "maxAttemptsPerTest": 3,
+  "test": {
+    "command": "dotnet test --logger trx",
+    "timeoutSeconds": 900,
+    "resultGlobs": ["**/TestResults/*.trx"],
+    "files": ["tests/**"]
+  },
+  "source": {
+    "files": ["src/**"]
+  }
+}
