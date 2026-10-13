@@ -44,7 +44,7 @@ function Copy-Item2([string]$Rel) {
 
 Copy-Item2 '.claude/skills/dev-flow'
 if (-not (Test-Path -LiteralPath (Join-Path $dst '.gitattributes'))) { Copy-Item2 '.gitattributes' } elseif (-not (Select-String -LiteralPath (Join-Path $dst '.gitattributes') -Pattern '*.sh' -SimpleMatch -Quiet)) { Add-Content -LiteralPath (Join-Path $dst '.gitattributes') -Value '*.sh text eol=lf'; Write-Output 'update: .gitattributes' }
-foreach ($a in 'design-reviewer', 'screen-designer', 'tdd-implementer') { Copy-Item2 ".claude/agents/$a.md" }
+foreach ($a in 'spec-reviewer', 'design-reviewer', 'screen-designer', 'tdd-implementer') { Copy-Item2 ".claude/agents/$a.md" }
 # 廃止したファイル (以前の版で導入されたもの) を消す
 foreach ($old in '.claude/agents/implementation-auditor.md', 'scripts/devflow-audit.ps1', '.devflow/audit-plan.json',
                  'scripts/devflow-implement.ps1', 'scripts/devflow-implement.sh', '.devflow/loop-session.json') {

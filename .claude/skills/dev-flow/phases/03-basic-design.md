@@ -40,7 +40,12 @@
    pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode docs -UpdateIndexes
    ```
 
-7. `index.md` と各ファイルの要約を提示し、明示的な承認を得る
+7. **レビュー (1 回だけ)** — interview-rules.md §7 に従い、`spec-reviewer` に対象フェーズ `basic-design` と
+   `docs/03-basic-design/` の成果物 (index.md、architecture.md、screens/index.md、screens/*.md、data-model.md、api/index.md、api/*.md、error-policy.md) の
+   パスを渡してレビューさせる (`designs/` と `design-spec.md` は渡さない)。画面が多い場合は、画面群と API・データ群などに分けて並列で起動してよい。
+   指摘を 1 つずつユーザーに質問して反映し、trace を exit 0 に戻す。**反映後の再レビューはしない**
+   (反映で画面の要素・状態・文言が変わったら、デザインも D3 の手順で直す)
+8. `index.md` と各ファイルの要約 (レビュー指摘と対応を含む) を提示し、明示的な承認を得る
 
 ## 画面デザインの手順 (screen-designer サブエージェント)
 
@@ -121,6 +126,7 @@
 - [ ] すべての設計 ID に検証方法と上流の要件 ID がある
 - [ ] 全要件 ID が、設計 ID から参照されているか、`index.md` の対応表で「詳細設計で対応」と明記されている
 - [ ] `devflow-trace.ps1 -Mode docs -UpdateIndexes` が exit 0
+- [ ] spec-reviewer のレビューを 1 回受け、指摘をすべてユーザーに確認して反映した (決定ツリーの「レビュー状況」が反映済み)
 - [ ] ユーザーが明示的に承認した (デザインと設計ドキュメントの両方)
 
 ## 終了

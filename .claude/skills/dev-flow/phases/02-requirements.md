@@ -36,7 +36,10 @@
    pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode docs -UpdateIndexes
    ```
 
-10. `index.md` と各ファイルの要約 (ID 件数、主な決定) を提示し、明示的な承認を得る
+10. **レビュー (1 回だけ)** — interview-rules.md §7 に従い、`spec-reviewer` に対象フェーズ `requirements` と
+    `docs/02-requirements/` の成果物 (index.md、functional/*.md、non-functional.md、data.md、external-integrations.md、tech-stack.md) の
+    パスを渡してレビューさせる。指摘を 1 つずつユーザーに質問して反映し、trace を exit 0 に戻す。**反映後の再レビューはしない**
+11. `index.md` と各ファイルの要約 (ID 件数、主な決定、レビュー指摘と対応) を提示し、明示的な承認を得る
 
 ## 完了条件
 
@@ -47,6 +50,7 @@
 - [ ] 非機能要件が数値基準と測定条件を持つ
 - [ ] 技術スタックが理由付きで決まり、テスト結果を JUnit XML / TRX で出せる
 - [ ] `devflow-trace.ps1 -Mode docs -UpdateIndexes` が exit 0
+- [ ] spec-reviewer のレビューを 1 回受け、指摘をすべてユーザーに確認して反映した (決定ツリーの「レビュー状況」が反映済み)
 - [ ] ユーザーが明示的に承認した
 
 ## 終了
