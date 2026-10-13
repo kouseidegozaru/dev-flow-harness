@@ -48,8 +48,8 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 | フェーズ | 進め方 | 成果物 |
 |----------|--------|--------|
 | 1. 企画・構想 | 対話 (1 問ずつ、推奨回答付き。「それで」で推奨どおりに進む) | `docs/01-vision.md` |
-| 2. 要件定義 | 対話 | `docs/02-requirements/` |
-| 3. 基本設計 | 対話。画面デザインは `screen-designer` がローカルの HTML などで作り、文章の指示で直す | `docs/03-basic-design/` |
+| 2. 要件定義 | 対話。承認の前に `spec-reviewer` が 1 回だけレビューし、指摘が 1 問ずつ質問される | `docs/02-requirements/` |
+| 3. 基本設計 | 対話。画面デザインは `screen-designer` がローカルの HTML などで作り、文章の指示で直す。承認の前に `spec-reviewer` が 1 回だけレビューし、指摘が 1 問ずつ質問される | `docs/03-basic-design/` |
 | 4. 詳細設計 | ほぼ自律。上流 (要件・基本設計) の決定が必要な点だけをまとめて確認される | `docs/04-detailed-design/`、`.devflow/config.json` |
 | 5. 実装 | 完全自動 (オーケストレーター + 実装担当サブエージェント) | コード、テスト、TDD のコミット |
 | 6. 検証 | 完全自動 (実装に続けて同じセッションで実行) | `docs/traceability.md`、`docs/verification-report.md` |
@@ -66,6 +66,13 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 ユーザーの最初の一言を開始の合図として、次フェーズが始まる (スキル名を打ち直す必要はない)。
 
 対話フェーズの決定事項は `.devflow/decisions/<phase>.md` に決定ツリーとして都度記録されるので、コンテキストが圧縮・クリアされても続きから再開できる。
+
+### 要件定義・基本設計の承認前レビュー
+
+- 成果物を書き終えると、承認を求める前に `spec-reviewer` サブエージェント (読み取りのみ) が **1 回だけ** レビューする。
+  次のフェーズの担当がユーザーに聞かないと決められない点 (曖昧・抜け・矛盾・検証できない基準・要件の未実現・設計間の不整合) だけを、推奨回答付きの質問の形で挙げる
+- 指摘は通常の対話と同じく 1 問ずつ質問され、回答が成果物と決定ツリーに反映される。ユーザーの判断が要らない指摘は質問せずに直される
+- 指摘を反映した後は再レビューしない。そのまま成果物の要約 (指摘と対応を含む) が提示され、承認に進む
 
 ### 基本設計の画面デザイン
 
@@ -177,6 +184,7 @@ pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind test -Scope TASK-003 -Mes
       design-guidelines.md    # 画面デザインの指針
       templates/              # 各成果物のテンプレート
   agents/
+    spec-reviewer.md          # 要件定義・基本設計を承認前に 1 回だけレビュー (次フェーズがユーザーに聞かないと決められない点を質問の形で)
     design-reviewer.md        # 詳細設計のタスクのまとまりを実装者目線で 1 回だけレビュー (実装者が止まる・誤る点だけ)
     screen-designer.md        # 画面デザインを HTML などで作成・修正 (文章の指示で修正)
     tdd-implementer.md        # 実装担当: タスクを次々に TDD で実装。閾値超えで handoff を書いて終える
@@ -254,5 +262,5 @@ scripts/
 | PostToolUse フック | 入力の `agent_type` が `tdd-implementer` のときだけ動く。実装担当の transcript (`<セッションの transcript と同じ場所>/<session_id>/subagents/agent-<agent_id>.jsonl`) の最新の応答の `message.usage` (`input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`) を `contextWindowTokens` で割って使用率とし、閾値超えなら `additionalContext` で引き継ぎを指示する |
 | SubagentStart フック | `tdd-implementer` の起動時に `.devflow/implementer.json` (開始時刻・開始時の使用量) を作る |
 | SubagentStop フック | `tdd-implementer` が終えようとしたとき、閾値未満で実行可能なタスクが残っていれば `decision: block` で次のタスクへ進ませる。閾値超えなら、`handoff.md` が開始後に更新され、作業ツリーがクリーンになるまで終えさせない。同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許す |
-| サブエージェント | `design-reviewer` (読み取りのみ)、`screen-designer`、`tdd-implementer`。いずれもメイン会話と同じモデル (`model: inherit`) |
+| サブエージェント | `spec-reviewer` (読み取りのみ)、`design-reviewer` (読み取りのみ)、`screen-designer`、`tdd-implementer`。いずれもメイン会話と同じモデル (`model: inherit`) |
 | フックの起動方法 | `"command": "pwsh", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/<名前>.ps1"]` の exec 形式で、OS やシェルに依存しない |

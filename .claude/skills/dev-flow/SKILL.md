@@ -50,7 +50,7 @@ implementation / verification は、このセッションを **オーケスト�
 
 - **入力は前フェーズまでの成果物ファイルだけ。** 会話の記憶や推測で補わない。上流ドキュメントは `index.md` を読んでから、必要なファイルだけを読む
 - 共通の参照資料 (必要なときに読む):
-  - [references/interview-rules.md](references/interview-rules.md) — 対話フェーズの詰め方 (01〜03 で必ず読む)
+  - [references/interview-rules.md](references/interview-rules.md) — 対話フェーズの詰め方と、承認前のレビュー (02・03 は spec-reviewer で 1 回だけ) (01〜03 で必ず読む)
   - [references/doc-structure.md](references/doc-structure.md) — 設計ドキュメントの分割ルール (02〜04 で必ず読む)
   - [references/traceability.md](references/traceability.md) — ID の書式・粒度・検証方法・テストへの埋め込み (02〜06 で必ず読む)
   - [references/design-guidelines.md](references/design-guidelines.md) — 画面デザインの指針 (screen-designer が読む)
