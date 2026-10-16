@@ -84,7 +84,7 @@ function Write-HookJson($Object) {
 function Get-DefaultConfig {
     return [ordered]@{
         contextWindowTokens     = 200000
-        contextThresholdPercent = 50
+        contextThresholdPercent = 70
         minSessionWorkTokens    = 40000
         hardLimitPercent        = 65
         maxVerificationRounds   = 3
