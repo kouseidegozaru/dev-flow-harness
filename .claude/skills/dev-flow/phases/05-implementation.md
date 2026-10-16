@@ -9,7 +9,7 @@
   タスクの中身・設計ファイル・ソースコードは読まない。タスクの完了確認もしない (`devflow-state.ps1 task <ID> done` が機械的に確認する)。
   読むのは `impl-status` の出力と、実装担当の短い報告だけ
 - **tdd-implementer サブエージェント (実装担当)**: タスクを依存順に 1 件ずつ TDD で実装・コミットし、次々にこなす。
-  自分のコンテキスト使用率が閾値 (`contextThresholdPercent`、既定 50%) を超えたら、きりの良いところで `.devflow/handoff.md` を書いて終える
+  自分のコンテキスト使用率が閾値 (`contextThresholdPercent`、既定 70%) を超えたら、きりの良いところで `.devflow/handoff.md` を書いて終える
   (使用率はフックが実装担当自身の transcript から測り、実装担当に知らせる。閾値前に終えようとしたら SubagentStop フックが止めて次のタスクへ進ませる)
 
 ## 進め方

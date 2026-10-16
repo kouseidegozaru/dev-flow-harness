@@ -21,7 +21,7 @@ $model = if ($in -and $in.model -and $in.model.display_name) { $in.model.display
 $parts = @("$esc[1m$model$esc[0m")
 if ($state) { $parts += "dev-flow: $(Get-PhaseLabel ([string]$state.phase))" }
 if ($null -ne $pct) {
-    $color = if ($pct -ge 50) { "$esc[31m" } elseif ($pct -ge 35) { "$esc[33m" } else { "$esc[32m" }
+    $color = if ($pct -ge 70) { "$esc[31m" } elseif ($pct -ge 50) { "$esc[33m" } else { "$esc[32m" }
     $parts += ("{0}ctx {1:N0}%{2}" -f $color, $pct, "$esc[0m")
 } else {
     $parts += 'ctx --%'

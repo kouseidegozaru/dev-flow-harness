@@ -1,8 +1,8 @@
 {
   "contextWindowTokens": 200000,
-  "contextThresholdPercent": 50,
+  "contextThresholdPercent": 70,
   "minSessionWorkTokens": 40000,
-  "hardLimitPercent": 65,
+  "hardLimitPercent": 85,
   "maxVerificationRounds": 3,
   "maxAttemptsPerTest": 3,
   "test": {

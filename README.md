@@ -101,7 +101,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 オーケストレーター (このセッション)            実装担当 (tdd-implementer サブエージェント)
   impl-status を見て実装担当を起動する ───────▶  handoff.md を読む
   (依頼文は「タスクを進めよ」の 1 行だけ)          next-task → TDD で実装・コミット → task done → 次のタスク …
-                                                  自分のコンテキストが 50% を超えたら、きりの良いところで
+                                                  自分のコンテキストが 70% を超えたら、きりの良いところで
   短い報告を受け取る ◀──────────────────────────  handoff.md を書いてコミットし、終える
   タスクが残っていれば、新しい実装担当を起動する (handoff.md から再開)
   全タスクが終わったら検証フェーズ (trace で漏れを調べ、漏れがあれば追加タスクを作って実装担当に戻す)
@@ -109,7 +109,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 
 - **オーケストレーター** はタスクの中身・設計・コードを読まず、実装担当を起動して待つだけ。コンテキストがほとんど増えない
 - **実装担当** は 1 体でタスクを依存順に次々とこなす。タスクごとに `test` → `feat` (→ `refactor`) をコミットし、`task done` → `chore(<ID>): タスク完了` で区切る
-- 実装担当のコンテキスト使用率はフックが実装担当自身の transcript から測る。閾値 (`contextThresholdPercent`、既定 50%) を超えたら、
+- 実装担当のコンテキスト使用率はフックが実装担当自身の transcript から測る。閾値 (`contextThresholdPercent`、既定 70%) を超えたら、
   タスクの完了またはコミットできる区切りで `handoff.md` を書いて終える。閾値の手前で終えようとしたら、フックが止めて次のタスクへ進ませる
 - タスクの完了は `devflow-state.ps1 task <ID> done` が機械的に確かめる (`test(<ID>)`・`feat(<ID>)` のコミットがあり、`devflow-trace -Mode task` が通ること)
 - 同じテストで `maxAttemptsPerTest` 回失敗した、設計どおりでは実装できない、設計にない判断が必要、のいずれかに当たったタスクは blocked として記録し、依存しない次のタスクへ進む。
@@ -238,9 +238,9 @@ scripts/
 | キー | 既定値 | 意味 |
 |------|--------|------|
 | `contextWindowTokens` | 200000 | 使用率の分母 |
-| `contextThresholdPercent` | 50 | 実装担当のコンテキスト使用率がこれを超えたら、次の実装担当に引き継ぐ |
+| `contextThresholdPercent` | 70 | 実装担当のコンテキスト使用率がこれを超えたら、次の実装担当に引き継ぐ |
 | `minSessionWorkTokens` | 40000 | 実装担当の開始時の使用量からこのトークン数以上進むまでは、閾値を超えても引き継がない (何も進めずに引き継ぎだけを繰り返すのを防ぐ) |
-| `hardLimitPercent` | 65 | この使用率に達したら、作業量にかかわらず引き継ぐ |
+| `hardLimitPercent` | 85 | この使用率に達したら、作業量にかかわらず引き継ぐ |
 | `maxVerificationRounds` | 3 | 検証ラウンドの上限 |
 | `maxAttemptsPerTest` | 3 | 同じテストでこの回数失敗したら blocked |
 | `test.command` | (詳細設計で設定) | 全テストを実行し結果ファイルを出すコマンド。ウォッチモードにしないこと |

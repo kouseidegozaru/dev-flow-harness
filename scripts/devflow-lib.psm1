@@ -84,9 +84,9 @@ function Write-HookJson($Object) {
 function Get-DefaultConfig {
     return [ordered]@{
         contextWindowTokens     = 200000
-        contextThresholdPercent = 50
+        contextThresholdPercent = 70
         minSessionWorkTokens    = 40000
-        hardLimitPercent        = 65
+        hardLimitPercent        = 85
         maxVerificationRounds   = 3
         maxAttemptsPerTest      = 3
         idPrefixes              = @('REQ', 'NFR', 'ARC', 'SCR', 'TRN', 'API', 'ERR', 'EXT', 'DM',
@@ -588,7 +588,7 @@ function Test-ContextOver($Config, $Usage, $BaseTokens) {
     if (-not $Usage) { return $false }
     $threshold = [double]$Config.contextThresholdPercent
     if ($Usage.Percent -lt $threshold) { return $false }
-    $hard = if ($Config.Contains('hardLimitPercent') -and $Config.hardLimitPercent) { [double]$Config.hardLimitPercent } else { 65 }
+    $hard = if ($Config.Contains('hardLimitPercent') -and $Config.hardLimitPercent) { [double]$Config.hardLimitPercent } else { 85 }
     if ($Usage.Percent -ge $hard) { return $true }
     $minWork = if ($Config.Contains('minSessionWorkTokens')) { [double]$Config.minSessionWorkTokens } else { 0 }
     if ($minWork -le 0 -or -not $BaseTokens) { return $true }
