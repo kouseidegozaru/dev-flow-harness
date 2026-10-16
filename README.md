@@ -240,7 +240,7 @@ scripts/
 | `contextWindowTokens` | 200000 | 使用率の分母 |
 | `contextThresholdPercent` | 70 | 実装担当のコンテキスト使用率がこれを超えたら、次の実装担当に引き継ぐ |
 | `minSessionWorkTokens` | 40000 | 実装担当の開始時の使用量からこのトークン数以上進むまでは、閾値を超えても引き継がない (何も進めずに引き継ぎだけを繰り返すのを防ぐ) |
-| `hardLimitPercent` | 65 | この使用率に達したら、作業量にかかわらず引き継ぐ |
+| `hardLimitPercent` | 85 | この使用率に達したら、作業量にかかわらず引き継ぐ |
 | `maxVerificationRounds` | 3 | 検証ラウンドの上限 |
 | `maxAttemptsPerTest` | 3 | 同じテストでこの回数失敗したら blocked |
 | `test.command` | (詳細設計で設定) | 全テストを実行し結果ファイルを出すコマンド。ウォッチモードにしないこと |
