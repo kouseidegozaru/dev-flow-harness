@@ -71,6 +71,7 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 - 人が確認する項目: `manual` 種別と `review` 種別の ID (`docs/traceability.md` の一覧から。review は `.devflow/review-log.md` の自己確認の記録を添える)
 - 検証で見つかって修正した漏れの一覧 (`.devflow/verification-log.md` から)
 - 未解決の漏れ (最大ラウンド超過、設計の不備) があればその一覧
+- 実装中に足した依存 (`.devflow/dep-changes.md` があれば、その見出しの一覧。設計の依存の漏れとして人が見る)
 
 そして:
 

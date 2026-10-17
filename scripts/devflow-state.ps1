@@ -9,6 +9,8 @@
   pwsh -NoProfile -File scripts/devflow-state.ps1 next-task
   pwsh -NoProfile -File scripts/devflow-state.ps1 task TASK-003 done        # 完了の条件を確かめてから done にする
   pwsh -NoProfile -File scripts/devflow-state.ps1 task TASK-003 blocked -Reason "..."
+  pwsh -NoProfile -File scripts/devflow-state.ps1 task-context TASK-003         # タスクの読み物 (タスクファイル + 参照した設計の節 + 依存タスクの実装メモ)
+  pwsh -NoProfile -File scripts/devflow-state.ps1 add-dep TASK-033 TASK-039 -Reason "..."   # 依存の漏れを直して後回しにする
   pwsh -NoProfile -File scripts/devflow-state.ps1 run start                # オーケストレーターの開始 (Stop フックが作業の途中で止まらないようにする)
 #>
 param(
@@ -162,6 +164,11 @@ switch ($Command) {
                 $hit = @(& git -C $root log --oneline --fixed-strings --grep "$k($Arg1)" 2>$null | Where-Object { $_ })
                 if ($hit.Count -eq 0) { $ng += "``$k($Arg1)`` のコミットがありません" }
             }
+            # 後続のタスクの実装担当が、コードを探し回らずに済むよう、作ったものの要点を残させる
+            $note = Join-DevflowPath $root ".devflow/notes/$Arg1.md"
+            if (-not (Test-Path -LiteralPath $note) -or -not (Read-Utf8 $note).Trim()) {
+                $ng += "実装メモ .devflow/notes/$Arg1.md がありません (templates/task-note.md の形で、後続のタスクが使う公開の名前・ファイル・注意点を書く)"
+            }
             $traceOut = & pwsh -NoProfile -File (Join-Path $PSScriptRoot 'devflow-trace.ps1') -Mode task -Task $Arg1 2>&1
             if ($LASTEXITCODE -ne 0) { $ng += "devflow-trace -Mode task -Task $Arg1 が NG です:`n$(($traceOut | Select-Object -Last 30) -join "`n")" }
             if ($ng.Count -gt 0) {
@@ -207,6 +214,55 @@ switch ($Command) {
         }
         Write-DevflowState $root $s
         Write-Output "$Arg1 → $Arg2"
+    }
+    'task-context' {
+        # task-context <TASK-ID>: 実装担当・レビュー担当がそのタスクで読むもの (タスクファイル + 参照すべき設計で指した節・ID の定義行
+        # + 依存タスクの実装メモ) を 1 つにまとめて出力する。設計ファイルを探し回って読む量を抑えるため
+        if (-not $Arg1) { throw 'task-context <TASK-ID> の形式で指定してください' }
+        $ctx = Get-TaskContext $root $config $Arg1 -WithNotes
+        Write-Output $ctx.Text
+        if ($ctx.Missing.Count -gt 0) {
+            Write-Output '<!-- 見つからなかった参照 (必要なら index.md から探して読む) -->'
+            $ctx.Missing | ForEach-Object { Write-Output "<!-- - $_ -->" }
+        }
+    }
+    'add-dep' {
+        # add-dep <TASK-ID> <DEP-ID> -Reason ...: 実装中に依存の漏れ (前提の成果物を作るタスクが依存にない) を見つけたとき、
+        # 依存を足して todo に戻す (blocked にして人の判断を待たずに、依存先の完了後に自動で再開させる)。
+        # 作業中なら、このタスクのコミットを blocked と同じく取り消す
+        if (-not $Arg1 -or -not $Arg2) { throw 'add-dep <TASK-ID> <DEP-ID> の形式で指定してください' }
+        $tasks = @(Read-TaskIndex $root $config)
+        $t = $tasks | Where-Object { $_.Id -eq $Arg1 } | Select-Object -First 1
+        $d = $tasks | Where-Object { $_.Id -eq $Arg2 } | Select-Object -First 1
+        if (-not $t) { throw "tasks/index.md に $Arg1 がありません" }
+        if (-not $d) { throw "tasks/index.md に $Arg2 がありません" }
+        if ($t.Status -eq 'done') { throw "$Arg1 は done です" }
+        if ($d.Status -eq 'done') { Write-Output "$Arg2 は done なので、依存を足す必要はありません (前提の成果物が無い原因は別にある)"; exit 1 }
+        if (Test-TaskDependsOn $tasks $Arg2 $Arg1) { Write-Output "$Arg2 は $Arg1 に (間接に) 依存しているため、足すと循環します。blocked にすること"; exit 1 }
+        $dirty = @(Get-UncommittedChanges $root $config)
+        if ($dirty.Count -gt 0) {
+            Write-Output "依存を足せません: 未コミットの変更があります。先に ``devflow-commit.ps1 -Kind chore -Scope $Arg1 -Message ""WIP (依存の追加)""`` でコミットすること"
+            exit 1
+        }
+        $s = Get-StateOrFail
+        if (-not $s.implementation.Contains('taskBase') -or $null -eq $s.implementation.taskBase) { $s.implementation.taskBase = [ordered]@{} }
+        $undoNote = Undo-TaskCommits $Arg1 ([string]$s.implementation.taskBase[$Arg1])
+        Add-TaskDependency $root $config $Arg1 $Arg2
+        Set-TaskIndexStatus $root $config $Arg1 'todo'
+        if ($t.Status -eq 'blocked') {
+            # blocked の解除として残す (最終レポートに解消済みの blocked を載せないため)
+            $bp = Join-DevflowPath $root '.devflow/blocked.md'
+            if (Test-Path -LiteralPath $bp) { Write-Utf8 $bp ((Read-Utf8 $bp) + "`n## $Arg1 解除 ($((Get-Date).ToString('yyyy-MM-dd HH:mm'))) → todo (依存に $Arg2 を追加)`n") }
+        }
+        if ($s.implementation.currentTask -eq $Arg1) { $s.implementation.currentTask = $null }
+        if ($s.implementation.taskBase.Contains($Arg1)) { $s.implementation.taskBase.Remove($Arg1) }
+        Write-DevflowState $root $s
+        $p = Join-DevflowPath $root '.devflow/dep-changes.md'
+        $text = if (Test-Path -LiteralPath $p) { Read-Utf8 $p } else { "# 実装中に足した依存`n" }
+        $text += "`n## $Arg1 → $Arg2 ($((Get-Date).ToString('yyyy-MM-dd HH:mm')))`n`n$Reason`n`n$undoNote`n"
+        Write-Utf8 $p $text
+        Write-Output $undoNote
+        Write-Output "$Arg1 の依存に $Arg2 を足し、todo に戻しました ($Arg2 の完了後に next-task が返す)"
     }
     'run' {
         # run start: このセッションを実装・検証フェーズのオーケストレーターとして登録する (Stop フックが途中で止まらないようにする)
@@ -266,6 +322,6 @@ switch ($Command) {
         Write-Output "OK (test.command: $($config.test.command))"
     }
     default {
-        throw "未知のコマンド: $Command (init|show|phase|start-phase|complete-phase|set-phase|impl-status|next-task|task|run|verification-round|add-verification-task|config|preflight)"
+        throw "未知のコマンド: $Command (init|show|phase|start-phase|complete-phase|set-phase|impl-status|next-task|task|task-context|add-dep|run|verification-round|add-verification-task|config|preflight)"
     }
 }

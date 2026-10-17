@@ -50,7 +50,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 | 1. 企画・構想 | 対話 (1 問ずつ、推奨回答付き。「それで」で推奨どおりに進む) | `docs/01-vision.md` |
 | 2. 要件定義 | 対話。承認の前に `spec-reviewer` が 1 回だけレビューし、指摘が 1 問ずつ質問される | `docs/02-requirements/` |
 | 3. 基本設計 | 対話。画面デザインは `screen-designer` がローカルの HTML などで作り、文章の指示で直す。承認の前に `spec-reviewer` が 1 回だけレビューし、指摘が 1 問ずつ質問される | `docs/03-basic-design/` |
-| 4. 詳細設計 | ほぼ自律。上流 (要件・基本設計) の決定が必要な点だけをまとめて確認される | `docs/04-detailed-design/`、`.devflow/config.json` |
+| 4. 詳細設計 | ほぼ自律。上流の抜けは推奨で補って記録し、完了時にまとめて報告する。質問は承認済みの決定を覆すもの・お金や法令などで根拠がないものだけ (1 回にまとめて、多くても 5 件程度) | `docs/04-detailed-design/`、`.devflow/config.json` |
 | 5. 実装 | 完全自動 (オーケストレーター + 実装担当サブエージェント) | コード、テスト、TDD のコミット |
 | 6. 検証 | 完全自動 (実装に続けて同じセッションで実行) | `docs/traceability.md`、`docs/verification-report.md` |
 
@@ -86,10 +86,14 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 ### 詳細設計のタスクとレビュー
 
 - タスクファイルには、そのタスク固有の内容 (目的・担当ID・参照すべき設計の節・作るファイル・テストケース・完了条件) だけを書き、設計の内容は写さずに節を参照する。
-  実装担当とレビュー担当は、参照された節だけを読む
+  参照は「1 行 1 ファイル、節は「見出し」、ID はそのまま」の形で書き、`devflow-state.ps1 task-context <ID>` がそこから読み物
+  (タスクファイル + 指した節 + ID の定義行) を機械的に切り出す。実装担当とレビュー担当は、この読み物と conventions.md だけを読む
+- 読み物の大きさは `taskContextBudgetKB` (既定 60KB) 以内にする (超えたら参照を絞るかタスクを分ける)。conventions.md は全タスク共通のことだけにして小さく保つ
 - レビューは必要最低限で、**1 回だけ**。同じ設計を参照するタスクのまとまりごとに `design-reviewer` を 1 体起動し、実装者が作業を止める、または設計と違う実装をしてしまう点だけを挙げさせる
-- 指摘は再レビューせずに設計へ反映する。上流の決定が必要なものだけをまとめてユーザーに確認する
-- ID の網羅性 (未割り当て・要件の未被覆・テストケース不足) は `devflow-trace.ps1 -Mode design` で機械的に確かめる
+- 指摘は再レビューせずに設計へ反映する。上流 (要件・基本設計) の抜けも、上流の方針から推奨が決まるものは推奨で補って決定ツリーの「上流を補った決定」に記録し、
+  完了時に件数を報告する。ユーザーに聞くのは、承認済みの決定を覆す・お金や法令・セキュリティなどで上流に根拠がない・同等の案があり推奨を決められないものだけ
+- ID の網羅性 (未割り当て・要件の未被覆・テストケース不足) と、実装で止まる原因 (依存の漏れ・参照先の見出しがない・読み物が大きすぎる) は
+  `devflow-trace.ps1 -Mode design` で機械的に確かめる
 - テストの実行方法 (`test.command` など) を `.devflow/config.json` に設定する
 
 ### 実装・検証 (完全自動)
@@ -108,10 +112,14 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 ```
 
 - **オーケストレーター** はタスクの中身・設計・コードを読まず、実装担当を起動して待つだけ。コンテキストがほとんど増えない
-- **実装担当** は 1 体でタスクを依存順に次々とこなす。タスクごとに `test` → `feat` (→ `refactor`) をコミットし、`task done` → `chore(<ID>): タスク完了` で区切る
+- **実装担当** は 1 体でタスクを依存順に次々とこなす。タスクごとに `task-context` の出力だけを読み、`test` → `feat` (→ `refactor`) をコミットし、
+  後続のタスク向けの実装メモ (`.devflow/notes/<ID>.md`) を書いて `task done` → `chore(<ID>): タスク完了` で区切る。
+  後続のタスクの `task-context` には依存タスクの実装メモが入るので、既存のコードを探し回らずに済む。`handoff.md` は引き継ぐときだけ全体を書き直す (追記で大きくしない)
 - 実装担当のコンテキスト使用率はフックが実装担当自身の transcript から測る。閾値 (`contextThresholdPercent`、既定 70%) を超えたら、
   タスクの完了またはコミットできる区切りで `handoff.md` を書いて終える。閾値の手前で終えようとしたら、フックが止めて次のタスクへ進ませる
 - タスクの完了は `devflow-state.ps1 task <ID> done` が機械的に確かめる (`test(<ID>)`・`feat(<ID>)` のコミットがあり、`devflow-trace -Mode task` が通ること)
+- 前提のタスクが依存に入っていなかったときは、blocked にせず `devflow-state.ps1 add-dep` で依存を足して todo に戻し、次のタスクへ進む。依存先が終わると自動で再開する
+  (記録は `.devflow/dep-changes.md` と最終レポート)
 - 同じテストで `maxAttemptsPerTest` 回失敗した、設計どおりでは実装できない、設計にない判断が必要、のいずれかに当たったタスクは blocked として記録し、依存しない次のタスクへ進む。
   blocked にするとき、そのタスクの変更は `revert(<TASK-ID>)` コミットで取り消され、全テストが通る状態に戻る (失敗するテストが残って後続のタスクまで Green にできなくなるのを防ぐ。取り消したコミットと復元方法は `.devflow/blocked.md` に残る)
 - **検証** は `devflow-trace.ps1 -Mode full` (全テスト実行・スタブ検索・ID の網羅性) で行う。漏れがあれば追加タスク `TASK-V<ラウンド>-<連番>` を作って実装に戻し、
@@ -206,7 +214,9 @@ scripts/
   state.json                  # 現在フェーズ、完了フェーズ、検証ラウンド、追加タスク
   config.json                 # テストコマンド、閾値など (詳細設計で設定)
   decisions/<phase>.md        # 対話フェーズの決定ツリー
-  handoff.md                  # 実装担当の間の引き継ぎ
+  handoff.md                  # 実装担当の間の引き継ぎ (作業中のタスクと注意点だけ。毎回書き直す)
+  notes/<TASK-ID>.md          # タスクの実装メモ (後続のタスクが使う公開の名前・ファイル・注意点。task-context が依存タスクの分を出す)
+  dep-changes.md              # 実装中に足した依存の記録
   blocked.md                  # 行き詰まったタスクの記録
   review-log.md               # review 種別の ID の自己確認の記録 (trace が有無を検査する)
   verification-log.md         # 検証ラウンドごとの漏れと追加タスク
@@ -218,7 +228,7 @@ scripts/
 
 | スクリプト | 主なコマンド |
 |------------|--------------|
-| `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
+| `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `task-context <ID>` (タスクの読み物) / `add-dep <ID> <依存 ID> [-Reason]` (依存を足して todo に戻す) / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
 | `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
 | `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]`。test は結果ファイルに担当 ID 付きの失敗したテストがあること、feat / refactor / fix は全テストの成功を確かめる |
 
@@ -243,6 +253,7 @@ scripts/
 | `hardLimitPercent` | 85 | この使用率に達したら、作業量にかかわらず引き継ぐ |
 | `maxVerificationRounds` | 3 | 検証ラウンドの上限 |
 | `maxAttemptsPerTest` | 3 | 同じテストでこの回数失敗したら blocked |
+| `taskContextBudgetKB` | 60 | 1 タスクの読み物 (`task-context` の設計部分) の上限。超えたタスクは詳細設計の trace で TASK-CONTEXT-LARGE になる |
 | `test.command` | (詳細設計で設定) | 全テストを実行し結果ファイルを出すコマンド。ウォッチモードにしないこと |
 | `test.timeoutSeconds` | 900 | テストの実行がこの秒数を超えたら止め、失敗として扱う (0 で無制限) |
 | `test.resultGlobs` | TRX / JUnit の典型パス | テスト結果ファイルの場所 |

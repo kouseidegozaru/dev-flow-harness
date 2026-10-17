@@ -89,6 +89,8 @@ function Get-DefaultConfig {
         hardLimitPercent        = 85
         maxVerificationRounds   = 3
         maxAttemptsPerTest      = 3
+        # 1 タスクの読み物 (タスクファイル + 参照すべき設計で指した節) の上限 (KB)。超えたタスクは詳細設計で分けるか参照を絞る
+        taskContextBudgetKB     = 60
         idPrefixes              = @('REQ', 'NFR', 'ARC', 'SCR', 'TRN', 'API', 'ERR', 'EXT', 'DM',
                                     'MOD', 'IF', 'VAL', 'EC', 'DBC', 'BR', 'TASK')
         test                    = [ordered]@{
@@ -425,6 +427,231 @@ function Get-MdSection([string]$Path, [string]$HeadingPattern) {
     return ($out -join "`n")
 }
 
+function Get-MdHeadingSections([string]$Path, [string]$Heading) {
+    # 見出しの文字列が Heading と一致する節 (見出しの行を含む。同レベル以上の次の見出しまで) をすべて返す。
+    # 完全一致がなければ前方一致、それもなければ部分一致で探す
+    $lines = (Read-Utf8 $Path) -split "`r?`n"
+    $heads = [System.Collections.Generic.List[object]]::new()
+    $inFence = $false
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*(```|~~~)') { $inFence = -not $inFence; continue }
+        if (-not $inFence -and $lines[$i] -match '^(#{1,6})\s+(.*?)\s*#*\s*$') {
+            $heads.Add([pscustomobject]@{ Index = $i; Level = $Matches[1].Length; Text = $Matches[2].Trim() })
+        }
+    }
+    $h = $Heading.Trim()
+    $hit = @($heads | Where-Object { $_.Text -eq $h })
+    if ($hit.Count -eq 0) { $hit = @($heads | Where-Object { $_.Text.StartsWith($h) }) }
+    if ($hit.Count -eq 0) { $hit = @($heads | Where-Object { $_.Text.Contains($h) }) }
+    $out = @()
+    foreach ($s in $hit) {
+        $next = $heads | Where-Object { $_.Index -gt $s.Index -and $_.Level -le $s.Level } | Select-Object -First 1
+        $end = if ($next) { $next.Index } else { $lines.Count }
+        $out += (($lines[$s.Index..($end - 1)]) -join "`n").TrimEnd()
+    }
+    return $out
+}
+
+# ---------------------------------------------------------------------------
+# タスクファイルの解析 (作成・変更するファイル、参照すべき設計)
+# ---------------------------------------------------------------------------
+
+function Test-PathLikeToken([string]$Token) {
+    # バッククォートの中身がファイルのパスとして書かれているか。
+    # 説明文中のシグネチャ (`migrate(url, dir = "x/y")`)・ディレクトリ (`src/server/data`、末尾が /)・glob はファイルとみなさない
+    # コード中の名前 (`router.refresh()`・`error.fieldErrors`) や URL のパス (`/a/b.json`) もファイルとみなさない
+    if ($Token -notmatch '^[\w@.+\-\[\]()/]+$' -or $Token.StartsWith('/') -or $Token.EndsWith('/')) { return $false }
+    $leaf = ($Token -split '/')[-1]
+    if ($leaf -in @('Dockerfile', 'Makefile', 'Procfile', 'Gemfile', 'Rakefile', 'Jenkinsfile', 'LICENSE')) { return $true }
+    return ($leaf -match '^[\w@.+\-\[\]]*\.[A-Za-z0-9]{1,10}$')
+}
+
+function Get-TaskFileEntries([string]$Section) {
+    # 「作成・変更するファイル」節のパス。戻り値: @{ Path; New } の列
+    # New: 同じ行で、パスより後ろに「新規」と書かれている (`a.ts` (新規) )。新規の説明の中で触れただけの既存ファイルは New にしない
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($line in ($Section -split "`r?`n")) {
+        if ($line -notmatch '^\s*[-*+]\s') { continue }
+        $newAt = $line.IndexOf('新規')
+        foreach ($m in [regex]::Matches($line, '`([^`]+)`')) {
+            $p = $m.Groups[1].Value.Trim()
+            if (-not (Test-PathLikeToken $p)) { continue }
+            if (@($out | Where-Object { $_.Path -eq $p }).Count -gt 0) { continue }
+            $out.Add([pscustomobject]@{ Path = $p; New = ($newAt -ge 0 -and $m.Index -lt $newAt) })
+        }
+    }
+    return $out
+}
+
+function Expand-IdShorthand([string]$Text, [regex]$IdRegex) {
+    # 略記を展開する: IF-set-003・004 → IF-set-003 IF-set-004、BR-SLOT-001〜003 → BR-SLOT-001 BR-SLOT-002 BR-SLOT-003
+    return [regex]::Replace($Text, '(' + $IdRegex.ToString() + ')((?:\s*[・、,〜~]\s*\d+)+)', {
+        param($m)
+        $id = $m.Groups[1].Value
+        if ($id -notmatch '^(.*-)(\d+)$') { return $m.Value }
+        $prefix = $Matches[1]; $width = $Matches[2].Length; $last = [int]$Matches[2]
+        $out = @($id)
+        foreach ($p in [regex]::Matches($m.Groups[2].Value, '([・、,〜~])\s*(\d+)')) {
+            $n = [int]$p.Groups[2].Value
+            if ($p.Groups[1].Value -in @('〜', '~') -and $n -gt $last -and $n - $last -le 50) { ($last + 1)..$n | ForEach-Object { $out += $prefix + $_.ToString().PadLeft($width, '0') } }
+            else { $out += $prefix + $p.Groups[2].Value.PadLeft($width, '0') }
+            $last = $n
+        }
+        return ($out -join ' ')
+    })
+}
+
+function Get-TaskReferences([string]$Section, [regex]$IdRegex, [string]$RootForResolve = '') {
+    # 「参照すべき設計」節の各行を、参照先ファイルごとに分ける。
+    # 書き方: - `docs/.../x.md` の「見出し」「見出し」 (ID, ID)  ← 見出しは「」で、ID はそのまま書く
+    # 1 行に複数のファイルがあるときは、ファイルの後ろから次のファイルまでの文をそのファイルの指定とみなす。
+    # `y.md` のようにディレクトリのないファイル名は、同じ行の直前のファイルと同じディレクトリとみなす。
+    # 戻り値: @{ Path; Headings; Ids; Line } の列。Headings も Ids もなければファイル全体
+    $out = [System.Collections.Generic.List[object]]::new()
+    foreach ($line in ($Section -split "`r?`n")) {
+        if ($line -notmatch '^\s*[-*+]\s') { continue }
+        # 参照先は設計ドキュメント (.md) と画面デザイン (.html) だけ。コードのファイル名は実装担当が自分で読む
+        $ms = @([regex]::Matches($line, '`([^`]+)`') | Where-Object { $v = $_.Groups[1].Value.Trim(); (Test-PathLikeToken $v) -and $v -match '\.(md|html?)$' })
+        $prevDir = ''
+        for ($k = 0; $k -lt $ms.Count; $k++) {
+            $p = $ms[$k].Groups[1].Value.Trim()
+            if (-not $p.StartsWith('docs/') -and $prevDir) {
+                # 直前のファイルからの相対 (`SCR-790.md`・`designs/SCR-790.html`): 直前のディレクトリから上にたどって最初に当たる場所
+                $cand = "$prevDir/$p"
+                $d = if ($RootForResolve) { $prevDir } else { '' }
+                while ($d) {
+                    if (Test-Path -LiteralPath (Join-DevflowPath $RootForResolve "$d/$p")) { $cand = "$d/$p"; break }
+                    $d = if ($d -match '/') { $d.Substring(0, $d.LastIndexOf('/')) } else { '' }
+                }
+                $p = $cand
+            }
+            $prevDir = if ($p -match '/') { $p.Substring(0, $p.LastIndexOf('/')) } else { '' }
+            $from = $ms[$k].Index + $ms[$k].Length
+            $to = if ($k + 1 -lt $ms.Count) { $ms[$k + 1].Index } else { $line.Length }
+            $spec = $line.Substring($from, $to - $from)
+            $heads = @([regex]::Matches($spec, '「([^」]+)」') | ForEach-Object { $_.Groups[1].Value.Trim() } | Where-Object { $_ })
+            $rest = [regex]::Replace($spec, '「[^」]*」', ' ')
+            $ids = @(Get-IdsInText (Expand-IdShorthand $rest $IdRegex) $IdRegex)
+            $out.Add([pscustomobject]@{ Path = $p; Headings = $heads; Ids = $ids; Line = $line.Trim() })
+        }
+    }
+    return $out
+}
+
+function Get-IdDefinitionRows([string]$Path, [string[]]$Ids) {
+    # ファイル中の表から、ID 列が Ids のどれかである行を、表の見出し行と合わせて返す (表ごとに 1 つの文字列)。行は原文のまま
+    $src = (Read-Utf8 $Path) -split "`r?`n"
+    $parts = [System.Collections.Generic.List[string]]::new()
+    $rowTexts = [System.Collections.Generic.List[string]]::new()
+    foreach ($tb in Get-MdTables $Path) {
+        $ci = Get-ColumnIndex $tb.Headers @('ID')
+        if ($ci -lt 0) { continue }
+        $rows = @($tb.Rows | Where-Object { $_.Cells.Count -gt $ci -and $Ids -contains (ConvertTo-PlainCell $_.Cells[$ci]) })
+        if ($rows.Count -eq 0) { continue }
+        $head = '| ' + ($tb.Headers -join ' | ') + ' |'
+        $sep = '|' + (($tb.Headers | ForEach-Object { '---' }) -join '|') + '|'
+        $body = @($rows | ForEach-Object { $src[$_.No - 1] })
+        foreach ($b in $body) { $rowTexts.Add($b) }
+        $parts.Add((@($head, $sep) + $body) -join "`n")
+    }
+    return [pscustomobject]@{ Text = ($parts -join "`n`n"); RowTexts = @($rowTexts) }
+}
+
+function Compress-DesignHtml([string]$Html) {
+    # 画面デザインの HTML を、実装者が構造・文言・状態を読める最小の形にする:
+    # svg の中身・script・コメントを除き、空白を詰める (アイコンの path などが大半を占め、読む量を増やすだけなので)
+    $h = [regex]::Replace($Html, '(?s)<!--.*?-->', '')
+    $h = [regex]::Replace($h, '(?s)<script\b.*?</script>', '')
+    $h = [regex]::Replace($h, '(?s)<svg\b([^>]*)>.*?</svg>', '<svg$1/>')
+    $h = [regex]::Replace($h, '>\s+<', ">`n<")
+    $h = [regex]::Replace($h, '[ \t]+', ' ')
+    return $h.Trim()
+}
+
+function Get-HtmlElementsById([string]$Html, [string]$Id) {
+    # data-state-id="Id" (なければ data-id="Id") を持つ要素を、閉じタグまで切り出す
+    foreach ($attr in 'data-state-id', 'data-id') {
+        $ms = [regex]::Matches($Html, '<([a-zA-Z][\w-]*)\b[^>]*\b' + $attr + '="' + [regex]::Escape($Id) + '"[^>]*>')
+        if ($ms.Count -eq 0) { continue }
+        $out = @()
+        foreach ($m in $ms) {
+            $tag = $m.Groups[1].Value
+            $re = [regex]::new('<(/?)' + [regex]::Escape($tag) + '\b[^>]*?(/?)>')
+            $depth = 0; $end = $Html.Length
+            foreach ($t in $re.Matches($Html, $m.Index)) {
+                if ($t.Groups[2].Value -eq '/') { if ($depth -eq 0) { $end = $t.Index + $t.Length; break } else { continue } }
+                if ($t.Groups[1].Value -eq '/') { $depth--; if ($depth -eq 0) { $end = $t.Index + $t.Length; break } } else { $depth++ }
+            }
+            $out += $Html.Substring($m.Index, $end - $m.Index)
+        }
+        return $out
+    }
+    return @()
+}
+
+function Get-TaskContext([string]$Root, $Config, [string]$TaskId, [switch]$WithNotes) {
+    # 実装担当・レビュー担当が読む「タスクの読み物」を組み立てる:
+    # タスクファイル + 「参照すべき設計」で指した節・ID の定義行 (+ 依存タスクの実装メモ)。
+    # 戻り値: @{ Text; Bytes (設計部分の大きさ。実装メモは含めない); Missing (見つからなかった参照の説明の列) }
+    $rel = "docs/04-detailed-design/tasks/$TaskId.md"
+    $full = Join-DevflowPath $Root $rel
+    if (-not (Test-Path -LiteralPath $full)) { throw "タスクファイル $rel がありません" }
+    $idre = Get-IdRegex $Config
+    $sb = [System.Text.StringBuilder]::new()
+    $missing = [System.Collections.Generic.List[string]]::new()
+    [void]$sb.AppendLine("<!-- devflow:context $TaskId -->").AppendLine("# [タスク] $rel").AppendLine().AppendLine((Read-Utf8 $full).TrimEnd()).AppendLine()
+    foreach ($ref in Get-TaskReferences (Get-MdSection $full '参照すべき設計') $idre $Root) {
+        $p = Join-DevflowPath $Root $ref.Path
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { $missing.Add("$($ref.Path): ファイルがありません"); continue }
+        $chunks = [System.Collections.Generic.List[string]]::new()
+        if ($ref.Path -match '\.html?$') {
+            # 画面デザイン: ID を書いたら、その状態・要素だけを切り出す。なければ全体 (どちらも圧縮した形)
+            $html = Compress-DesignHtml (Read-Utf8 $p)
+            foreach ($id in $ref.Ids) {
+                $els = @(Get-HtmlElementsById $html $id)
+                if ($els.Count -eq 0) { $missing.Add("$($ref.Path): data-state-id / data-id「$id」がありません"); continue }
+                foreach ($e in $els) { $chunks.Add($e) }
+            }
+            if ($ref.Ids.Count -eq 0) { $chunks.Add($html) }
+            if ($chunks.Count -gt 0) {
+                [void]$sb.AppendLine("# [設計] $($ref.Path) (圧縮: svg の中身・script を除いた)").AppendLine("<!-- 指定: $($ref.Line) -->").AppendLine()
+                foreach ($c in $chunks) { [void]$sb.AppendLine($c).AppendLine() }
+            }
+            continue
+        }
+        foreach ($h in $ref.Headings) {
+            $secs = @(Get-MdHeadingSections $p $h)
+            if ($secs.Count -eq 0) { $missing.Add("$($ref.Path): 見出し「$h」がありません"); continue }
+            foreach ($s in $secs) { $chunks.Add($s) }
+        }
+        if ($ref.Ids.Count -gt 0) {
+            # ID の詳細の節 (見出しが ID で始まる) と、ID の定義行
+            foreach ($id in $ref.Ids) {
+                foreach ($s in @(Get-MdHeadingSections $p $id | Where-Object { $_ -match ('^#+\s+' + [regex]::Escape($id) + '(?![A-Za-z0-9-])') })) {
+                    if (-not ($chunks | Where-Object { $_.Contains($s) })) { $chunks.Add($s) }
+                }
+            }
+            # 定義行は、指定した見出しの節に入っていなければ足す
+            $def = Get-IdDefinitionRows $p $ref.Ids
+            $already = ($chunks -join "`n")
+            if ($def.Text -and @($def.RowTexts | Where-Object { -not $already.Contains($_) }).Count -gt 0) { $chunks.Add($def.Text) }
+        }
+        if ($ref.Headings.Count -eq 0 -and $chunks.Count -eq 0) { $chunks.Add((Read-Utf8 $p).TrimEnd()) }
+        if ($chunks.Count -eq 0) { continue }
+        [void]$sb.AppendLine("# [設計] $($ref.Path)").AppendLine("<!-- 指定: $($ref.Line) -->").AppendLine()
+        foreach ($c in $chunks) { [void]$sb.AppendLine($c).AppendLine() }
+    }
+    $bytes = [System.Text.Encoding]::UTF8.GetByteCount($sb.ToString())
+    if ($WithNotes) {
+        $task = Read-TaskIndex $Root $Config | Where-Object { $_.Id -eq $TaskId } | Select-Object -First 1
+        foreach ($d in @($task.Deps)) {
+            $np = Join-DevflowPath $Root ".devflow/notes/$d.md"
+            if (Test-Path -LiteralPath $np) { [void]$sb.AppendLine("# [依存タスクの実装メモ] .devflow/notes/$d.md").AppendLine().AppendLine((Read-Utf8 $np).TrimEnd()).AppendLine() }
+        }
+    }
+    return [pscustomobject]@{ Text = $sb.ToString(); Bytes = $bytes; Missing = @($missing) }
+}
+
 # ---------------------------------------------------------------------------
 # ID
 # ---------------------------------------------------------------------------
@@ -505,6 +732,55 @@ function Set-TaskIndexStatus([string]$Root, $Config, [string]$TaskId, [string]$S
     $cells[$cs] = $Status
     $lines[$task.Line - 1] = '| ' + (($cells | ForEach-Object { $_.Replace('|', '\|') }) -join ' | ') + ' |'
     Write-Utf8 $path (($lines -join "`n"))
+}
+
+function Add-TaskDependency([string]$Root, $Config, [string]$TaskId, [string]$DepId) {
+    # tasks/index.md の「依存」列とタスクファイルの「依存」行の両方に DepId を足す (両者は trace が一致を確かめる)
+    $path = Get-TasksIndexPath $Root
+    $lines = (Read-Utf8 $path) -split "`r?`n"
+    $task = Read-TaskIndex $Root $Config | Where-Object { $_.Id -eq $TaskId } | Select-Object -First 1
+    if (-not $task) { throw "tasks/index.md に $TaskId がありません" }
+    $tb = (Get-MdTables $path) | Where-Object { $_.Rows.No -contains $task.Line } | Select-Object -First 1
+    $cd = Get-ColumnIndex $tb.Headers @('依存', 'Deps')
+    if ($cd -lt 0) { throw 'tasks/index.md に「依存」列がありません' }
+    $deps = (@($task.Deps) + $DepId | Select-Object -Unique) -join ', '
+    $cells = @(Split-MdRow $lines[$task.Line - 1])
+    $cells[$cd] = $deps
+    $lines[$task.Line - 1] = '| ' + (($cells | ForEach-Object { $_.Replace('|', '\|') }) -join ' | ') + ' |'
+    Write-Utf8 $path (($lines -join "`n"))
+
+    $tf = Join-DevflowPath $Root "docs/04-detailed-design/tasks/$TaskId.md"
+    if (Test-Path -LiteralPath $tf) {
+        $tl = (Read-Utf8 $tf) -split "`r?`n"
+        for ($i = 0; $i -lt $tl.Count; $i++) {
+            if ($tl[$i] -match '^\s*\|' ) {
+                $c = @(Split-MdRow $tl[$i])
+                if ($c.Count -ge 2 -and (ConvertTo-PlainCell $c[0]) -eq '依存') {
+                    $c[1] = $deps
+                    $tl[$i] = '| ' + (($c | ForEach-Object { $_.Replace('|', '\|') }) -join ' | ') + ' |'
+                    break
+                }
+            }
+        }
+        Write-Utf8 $tf (($tl -join "`n"))
+    }
+}
+
+function Test-TaskDependsOn($Tasks, [string]$From, [string]$To) {
+    # From から依存をたどって To に着くか
+    $byId = @{}
+    foreach ($t in $Tasks) { $byId[$t.Id] = $t }
+    $seen = @{}
+    $stack = [System.Collections.Generic.Stack[string]]::new()
+    $stack.Push($From)
+    while ($stack.Count -gt 0) {
+        $c = $stack.Pop()
+        if ($c -eq $To) { return $true }
+        if ($seen.ContainsKey($c) -or -not $byId.ContainsKey($c)) { continue }
+        $seen[$c] = $true
+        foreach ($d in $byId[$c].Deps) { $stack.Push($d) }
+    }
+    return $false
 }
 
 function Get-ReadyTask($Tasks) {
