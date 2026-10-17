@@ -21,7 +21,8 @@
    (このセッションをオーケストレーターとして登録する。Stop フックが、作業を残したままこのセッションが応答を終えるのを防ぐ)
 4. `pwsh -NoProfile -File scripts/devflow-state.ps1 impl-status` を実行する
    - `status` が `ready`: 手順 5 へ
-   - `complete` または `stuck` (残りが blocked とそれに依存するタスクだけ): 「全タスク処理後」へ
+   - `complete` または `stuck` (残りが blocked とそれに依存するタスクだけ): 「全タスク処理後」へ。
+     blocked の理由に設計の直し方が書かれていても、ここで設計を直したり、直してよいかをユーザーに確認したりしない (最終レポートで報告する)
    - `no-tasks` (tasks/index.md が無いか、ID と状態の列を持つ表が読めない): 実装担当を起動しない。`devflow-state.ps1 run stop` を実行し、
      「タスク一覧を読めない (docs/04-detailed-design/tasks/index.md を確認し、直したら `/dev-flow` で再開)」とユーザーに報告して止まる
 5. `tdd-implementer` サブエージェントを **前面で** 起動し、終わるまで待つ。依頼文は次の 1 行だけ (タスクの中身を書き足さない):
@@ -50,7 +51,7 @@
 | preflight が NG | 出力 | テストのツールを入れる、または `.devflow/config.json` の `test.command` / `test.resultGlobs` を直す |
 | no-tasks | `docs/04-detailed-design/tasks/index.md` | ID と状態の列を持つ表に直す (`devflow-trace -Mode design` が exit 0 になること) |
 | 進捗がないまま実装担当が終わり続けた | `impl-status`、`.devflow/handoff.md`、`.devflow/logs/` のテストのログ | テストの環境 (DB・外部サービス・ポート) を用意する。設計が原因なら `/dev-flow redo detailed-design` |
-| 残りが blocked だけ | `.devflow/blocked.md` の理由と「必要な判断」 | 判断して設計を直し、`devflow-state.ps1 task <ID> todo` で戻す。途中の作業を生かすなら、blocked.md の `git revert <取り消しコミット>` で先に復元する |
+| 残りが blocked だけ (検証まで進んで最終レポートに載る) | `.devflow/blocked.md` の理由と「必要な判断」 | 判断して設計を直し、`devflow-state.ps1 task <ID> todo` で戻す。途中の作業を生かすなら、blocked.md の `git revert <取り消しコミット>` で先に復元する |
 
 ## 実装担当に守らせていること (参考)
 
@@ -60,6 +61,9 @@
 - テストが落ちている状態での `feat` / `refactor` コミットの禁止 (`devflow-commit.ps1` が拒否する)
 - タスクの完了は `devflow-state.ps1 task <ID> done` が確かめる: `test(<ID>)`・`feat(<ID>)` のコミットがあり、
   `devflow-trace -Mode task` (全テスト実行・担当 ID のテスト名・スタブ検索) が exit 0
+- タスクごとに読むのは `devflow-state.ps1 task-context <ID>` の出力 (タスクファイル + 参照した設計の節 + 依存タスクの実装メモ) だけ。
+  done の前に、後続のタスク向けの実装メモ `.devflow/notes/<ID>.md` を書く (`task <ID> done` が有無を確かめる)。`handoff.md` は引き継ぐときだけ、全体を書き直す
+- 前提のタスクが依存に入っていなかったときは、blocked にせず `devflow-state.ps1 add-dep <ID> <作るタスク>` で依存を足して後回しにする (人の判断を待たない)
 - 同じテストで `maxAttemptsPerTest` 回失敗した、設計どおりでは実装できない、設計にない判断が必要、のいずれかなら blocked にして次のタスクへ
 
 ## ユーザーの権限設定について

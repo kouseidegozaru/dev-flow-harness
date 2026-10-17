@@ -110,7 +110,7 @@ foreach ($t in $taskIndex) {
     if ($tasks.Contains($t.Id)) { Add-Issue 'DUPLICATE-TASK' $t.Id 'tasks/index.md にタスクが重複しています'; continue }
     $tasks[$t.Id] = [pscustomobject]@{
         id = $t.Id; title = $t.Title; deps = $t.Deps; status = $t.Status
-        file = "docs/04-detailed-design/tasks/$($t.Id).md"; assigned = @(); files = @(); testCaseIds = @()
+        file = "docs/04-detailed-design/tasks/$($t.Id).md"; assigned = @(); files = @(); fileEntries = @(); refIds = @(); testCaseIds = @()
     }
     if ((Get-TaskStatuses) -notcontains $t.Status) { Add-Issue 'INVALID-STATUS' $t.Id "未知の状態: '$($t.Status)'" 'docs/04-detailed-design/tasks/index.md' }
 }
@@ -134,8 +134,9 @@ foreach ($rel in $taskFiles) {
     $d1 = ($fileDeps | Sort-Object) -join ','
     $d2 = ($t.deps | Sort-Object) -join ','
     if ($d1 -ne $d2) { Add-Issue 'TASK-DEPS-MISMATCH' $tid "依存がタスクファイル ($d1) と index.md ($d2) で異なります" $rel }
-    $filesSection = Get-MdSection $full '作成・変更するファイル'
-    $t.files = @([regex]::Matches($filesSection, '`([^`]+)`') | ForEach-Object { $_.Groups[1].Value.Trim() } | Where-Object { $_ -match '[/.]' })
+    $t.fileEntries = @(Get-TaskFileEntries (Get-MdSection $full '作成・変更するファイル'))
+    $t.files = @($t.fileEntries | ForEach-Object { $_.Path })
+    $t.refIds = @(Get-TaskReferences (Get-MdSection $full '参照すべき設計') $idre | ForEach-Object { $_.Ids } | Select-Object -Unique)
     $t.testCaseIds = @(Get-IdsInText (Get-MdSection $full 'テストケース') $idre)
 }
 foreach ($t in $tasks.Values) {
@@ -162,6 +163,56 @@ function Test-Cycle([string]$Id, [string[]]$Path) {
     $visiting.Remove($Id); $visited[$Id] = $true
 }
 foreach ($id in @($tasks.Keys)) { Test-Cycle $id @() }
+
+if ($Mode -eq 'design') {
+    # 依存の漏れ: 実装担当が「前提のタスクがまだない」で止まるのを、詳細設計のうちに見つける
+    $ancestors = @{}
+    function Get-Ancestors([string]$Id) {
+        if ($ancestors.ContainsKey($Id)) { return $ancestors[$Id] }
+        $ancestors[$Id] = @{}   # 循環の保険
+        $set = @{}
+        if ($tasks.Contains($Id)) {
+            foreach ($d in $tasks[$Id].deps) { $set[$d] = $true; foreach ($k in (Get-Ancestors $d).Keys) { $set[$k] = $true } }
+        }
+        $ancestors[$Id] = $set
+        return $set
+    }
+    # (1) 他のタスクが新規に作るファイルを変更・利用するなら、そのタスクが祖先にあること
+    $creators = @{}
+    foreach ($t in $tasks.Values) { foreach ($e in $t.fileEntries) { if ($e.New) { if (-not $creators[$e.Path]) { $creators[$e.Path] = @() }; $creators[$e.Path] += $t.id } } }
+    foreach ($t in $tasks.Values) {
+        $anc = Get-Ancestors $t.id
+        foreach ($e in @($t.fileEntries | Where-Object { -not $_.New })) {
+            $cs = @($creators[$e.Path] | Where-Object { $_ -and $_ -ne $t.id })
+            if ($cs.Count -gt 0 -and @($cs | Where-Object { $anc.ContainsKey($_) }).Count -eq 0) {
+                Add-Issue 'TASK-DEP-MISSING' $t.id "$($e.Path) は $($cs -join ', ') が新規に作るが、依存 (祖先) にない" $t.file
+            }
+        }
+    }
+    # (2) 参照すべき設計で指した ID を他のタスクだけが担当しているなら、そのタスクが祖先にあること
+    #     (祖先でなくても、後のタスクの仕様を参考に読むだけのこともあるため警告にする)
+    foreach ($t in $tasks.Values) {
+        $anc = Get-Ancestors $t.id
+        foreach ($rid in $t.refIds) {
+            if (-not $defs.Contains($rid) -or $t.assigned -contains $rid) { continue }
+            $owners = @($defs[$rid].tasks | Where-Object { $_ -ne $t.id } | Select-Object -Unique)
+            if ($owners.Count -gt 0 -and @($owners | Where-Object { $anc.ContainsKey($_) }).Count -eq 0) {
+                Add-Issue 'TASK-DEP-SUSPECT' $t.id "参照する $rid は $($owners -join ', ') が実装するが、依存 (祖先) にない" $t.file
+            }
+        }
+    }
+    # (3) 読み物の大きさと参照先の実在: 実装担当がタスクごとに読む量を抑える
+    $budget = [double]$config.taskContextBudgetKB
+    foreach ($t in $tasks.Values) {
+        if ($taskFiles -notcontains $t.file) { continue }
+        $ctx = Get-TaskContext $root $config $t.id
+        foreach ($m in $ctx.Missing) { Add-Issue 'TASK-REF-NOT-FOUND' $t.id "参照すべき設計の参照先が見つかりません: $m" $t.file }
+        $kb = [math]::Round($ctx.Bytes / 1024, 1)
+        if ($budget -gt 0 -and $kb -gt $budget) {
+            Add-Issue 'TASK-CONTEXT-LARGE' $t.id "タスクの読み物が $kb KB (上限 taskContextBudgetKB = $budget KB)。参照を節・ID に絞るか、タスクを分ける (devflow-state.ps1 task-context $($t.id) で中身を確かめられる)" $t.file
+        }
+    }
+}
 
 # ---------------------------------------------------------------------------
 # 3. 設計の整合チェック
@@ -390,7 +441,7 @@ if ($Mode -eq 'docs') {
     $issues.Clear(); foreach ($i in $keep) { $issues.Add($i) }
 }
 # 常に警告に回す種別 (人が見て判断するもの)
-$soft = @($issues | Where-Object { $_.code -eq 'DESIGN-NO-ELEMENT' })
+$soft = @($issues | Where-Object { $_.code -in @('DESIGN-NO-ELEMENT', 'TASK-DEP-SUSPECT') })
 if ($soft.Count -gt 0) {
     foreach ($i in $soft) { $warnings.Add($i); [void]$issues.Remove($i) }
 }
