@@ -156,7 +156,10 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
     Git 連携の自動デプロイ → トークン 1 つで済む CLI → サービスごとにキーが要るもの、の順に選ぶ。
     アプリが使う設定値を別のサービスから受け渡すとき (DB の URL・公開キーなど) も、両方の MCP があればエージェントが読み出して設定する。
     ユーザーがする作業は `architecture.md` の「ユーザーが一度だけする作業」にまとまり、詳細設計の終わりに案内される
-  - 必要な秘密 (トークンなど) は `requiredEnv` に環境変数名だけを書き、値は環境に設定しておく (クラウドでは環境の設定の環境変数)。ログ (`.devflow/logs/deploy-*.log`) は git の管理外
+  - 必要な秘密 (トークンなど) は `requiredEnv` に名前だけを書き、値は **vault** (Doppler・1Password・Infisical など。`deploy.vault`) に置く。
+    環境変数になければ `devflow-deploy.ps1` が vault から取り出して、デプロイのコマンドにだけ渡す (ファイルには書かない)。
+    エージェントが MCP・CLI で読み出せる値は、エージェントが vault に保存する (`set-secret`)。ユーザーが環境の設定に入れるのは vault の認証の値 1 つだけ。
+    ログ (`.devflow/logs/deploy-*.log`) は git の管理外
 
 **注意:** `bypassPermissions` は git・テスト・ファイル編集・デプロイを確認なしで行う。信頼できるリポジトリで、できればコンテナや専用の作業環境で実行すること。
 許可リストを細かく設定する場合は `acceptEdits` + `permissions.allow` (テストコマンド、`git`、`pwsh -NoProfile -File scripts/devflow-*`) でもよい。
@@ -272,7 +275,7 @@ scripts/
 |------------|--------------|
 | `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `task-context <ID>\|all` (タスクの読み物を `.devflow/context/<ID>.md` に書き出す) / `check-branches` (ほかのブランチで dev-flow が進んでいないか。exit 5 なら進んでいる) / `add-dep <ID> <依存 ID> [-Reason]` (依存を足して todo に戻す) / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
 | `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
-| `devflow-deploy.ps1` | `plan` (実行できるかを確かめる。exit 3 = デプロイ先なし、4 = 検証の結果が前提を満たさない) / `all` (全環境を順にデプロイ。exit 5 = MCP で行う環境の手順を出して止まった) / `run <name> [-Force]` / `rollback <name>` / `finish <name> -Result success\|failed [-Note]` / `rollback-done <name> -Result success\|failed` / `status` |
+| `devflow-deploy.ps1` | `plan` (実行できるかを確かめる。exit 3 = デプロイ先なし、4 = 検証の結果が前提を満たさない) / `all` (全環境を順にデプロイ。exit 5 = MCP で行う環境の手順を出して止まった) / `run <name> [-Force]` / `rollback <name>` / `finish <name> -Result success\|failed [-Note]` / `rollback-done <name> -Result success\|failed` / `secrets` (秘密の値がそろっているか) / `set-secret <NAME> -Value <値>` (vault に保存) / `status` |
 | `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]`。test は結果ファイルに担当 ID 付きの失敗したテストがあること、feat / refactor / fix は全テストの成功を確かめる |
 
 ## ID とトレーサビリティ
@@ -306,6 +309,8 @@ scripts/
 | `deploy.timeoutSeconds` | 1800 | デプロイ・確認・切り戻しの各コマンドがこの秒数を超えたら止め、失敗として扱う (0 で無制限) |
 | `deploy.rollbackOnFailure` | true | 公開後の確認が失敗したら、自動で切り戻す |
 | `deploy.allowWithIssues` | false | true なら、検証に未解決の漏れや blocked のタスクがあってもデプロイする |
+| `deploy.vault` | (詳細設計で設定) | 秘密の値の置き場所。`name`、`getCommand` (`{name}` の値を標準出力に出す)、`setCommand` (標準入力の値を `{name}` に保存する)、`requiredEnv` (vault の認証)、`installCommand` (CLI がないときに入れる) |
+| `deploy.secrets` | | 秘密の値ごとの `name` と `source` (エージェントが MCP・CLI で読み出す手順、または「ユーザーが vault に入れる」) |
 | `stubPatterns` | TODO/FIXME/XXX のコメント、未実装例外など | スタブとして検出するパターン (正規表現) |
 | `idPrefixes` | REQ, NFR, ARC, SCR, TRN, API, ERR, EXT, DM, MOD, IF, VAL, EC, DBC, BR, TASK | ID として認識する接頭辞 |
 
