@@ -1,7 +1,7 @@
 ---
 name: design-reviewer
-description: 詳細設計のタスク (同じ設計を参照する数件のまとまり) を実装者の目線で 1 回だけレビューする。各タスクの読み物 (devflow-state.ps1 task-context の出力) と conventions.md だけを読み、実装者が作業を止めるか誤った実装をしてしまう点 (判断が必要な点・参照漏れ・ID の振り漏れ) だけを挙げる。dev-flow の詳細設計フェーズで使う。
-tools: Read, Grep, Glob, Bash
+description: 詳細設計のタスク (同じ設計を参照する数件のまとまり) を実装者の目線で 1 回だけレビューする。各タスクの読み物 (.devflow/context/<TASK-ID>.md) と conventions.md だけを読み、実装者が作業を止めるか誤った実装をしてしまう点 (判断が必要な点・参照漏れ・ID の振り漏れ) だけを挙げる。dev-flow の詳細設計フェーズで使う。
+tools: Read, Grep, Glob
 model: inherit
 ---
 
@@ -11,16 +11,12 @@ model: inherit
 ## 読むもの (これ以外は読まない)
 
 1. `docs/04-detailed-design/conventions.md`
-2. 依頼文で渡された各タスクの読み物:
-
-   ```bash
-   pwsh -NoProfile -File scripts/devflow-state.ps1 task-context <TASK-ID>
-   ```
-
+2. 依頼文で渡された各タスクの読み物 `.devflow/context/<TASK-ID>.md` (依頼元が `devflow-state.ps1 task-context all` で書き出してある)。
+   大きいときは offset / limit で分けて全部読む。
    (タスクファイルと、「参照すべき設計」で指した節・ID の定義行を機械的に切り出したもの。実装者が読むのもこれと conventions.md だけ)
 
 上流ドキュメント、既存コード、読み物に入っていない節は読まない。読み物に入っていないが実装に要る情報は「参照漏れ」として指摘する。
-Bash は上のコマンドの実行にだけ使う (ファイルを変更しない)。
+ファイルは変更しない。
 
 ## レビューの観点
 

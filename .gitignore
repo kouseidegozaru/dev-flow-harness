@@ -3,4 +3,5 @@
 .devflow/implementer.json
 .devflow/orchestrator.json
 .devflow/logs/
+.devflow/context/
 .devflow/trace-*.json

@@ -5,7 +5,8 @@
   "hardLimitPercent": 85,
   "maxVerificationRounds": 3,
   "maxAttemptsPerTest": 3,
-  "taskContextBudgetKB": 60,
+  "concurrentRunHours": 72,
+  "taskContextBudgetKB": 40,
   "test": {
     "command": "dotnet test --logger trx",
     "timeoutSeconds": 900,

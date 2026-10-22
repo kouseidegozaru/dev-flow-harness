@@ -2,7 +2,9 @@
 #
 # - source=clear   : 前フェーズ完了後の /clear。次フェーズの開始指示を注入する
 #                    (実装・検証フェーズは、このセッションをオーケストレーターとして開始させる)
-# - source=startup : 進行中フェーズを知らせる。実装・検証フェーズが未開始なら (詳細設計の後に起動し直した)、clear と同じく開始させる
+# - source=startup : 進行中フェーズを知らせる。実装・検証フェーズが未開始なら (詳細設計の後に起動し直した)、clear と同じく開始させる。
+#                    クラウドのセッション (CLAUDE_CODE_REMOTE=true) は、新しいセッションを始めることが /clear の代わりになるため、
+#                    対話フェーズも未開始なら clear と同じく開始させる
 # - source=compact : 手順書と決定ツリー (実装・検証なら状態と引き継ぎ) の再読を指示する
 # - source=resume  : 会話がそのまま残るので何もしない
 
@@ -50,6 +52,16 @@ switch ($source) {
         }
     }
     'startup' {
+        $cloud = ($env:CLAUDE_CODE_REMOTE -eq 'true')
+        if ($cloud -and $interactivePhases -contains $phase -and -not $state.phaseStarted -and @($state.completedPhases).Count -gt 0) {
+            Out-Context @"
+[dev-flow 自動再開]
+クラウドのセッションが新しく始まった。前フェーズは完了している。現在フェーズ: $phase ($label)。
+ユーザーの最初のメッセージが「続けて」「ok」などの短い合図なら、それを開始の合図とみなし、直ちに .claude/skills/dev-flow/SKILL.md を読んで、
+その手順どおりに $label フェーズを開始すること (別の用件なら、その用件に答える)。
+前フェーズまでの会話内容は参照せず、docs/ の成果物だけを入力とする。
+"@
+        }
         if ($interactivePhases -contains $phase) {
             $started = if ($state.phaseStarted) { '途中まで進んでいる' } else { 'まだ始まっていない' }
             Out-Context "[dev-flow] 開発フローが進行中 (現在フェーズ: $label, $started)。ユーザーが続きを望んだら .claude/skills/dev-flow/SKILL.md に従って再開する。"

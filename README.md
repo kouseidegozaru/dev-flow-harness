@@ -17,6 +17,7 @@ Claude Code 上で **企画・構想 → 要件定義 → 基本設計 → 詳�
 | git | | コミット、進捗の判定 |
 
 フックとスクリプトはすべて PowerShell 7 で書かれている (python / node / jq は不要)。`scripts/devflow-trace.sh` は pwsh を呼ぶだけのラッパー。
+pwsh がない環境のために、bash で書いた SessionStart フック (`.claude/hooks/ensure-pwsh.sh`) が 1 つだけある (下の「クラウドで使う」)。
 
 ## 導入
 
@@ -30,6 +31,23 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 - `.gitignore` に dev-flow の一時ファイルを、`.gitattributes` に `*.sh text eol=lf` を追加する
 - `-Force`: 導入済みのプロジェクトを更新する。ハーネスのファイルをすべて置き換え、以前の版で使っていた不要なファイルを消す。
   導入済みのプロジェクトに `-Force` なしで実行するとエラーになる (一部だけ置き換わって古いファイルと混在するのを防ぐ)。git リポジトリでない場所にも導入しない
+
+## クラウドで使う (claude.ai/code)
+
+クラウドのセッションのコンテナには pwsh が入っておらず、コンテナが作り直されるたびに消える。
+
+- **推奨:** 環境の設定のセットアップスクリプトに `bash scripts/devflow-setup-cloud.sh` を書く。セッションの開始前に pwsh が入る
+- 書かなくても、SessionStart フック (`ensure-pwsh.sh`) が、クラウド (環境変数 `CLAUDE_CODE_REMOTE=true`) で pwsh がないときに同じスクリプトで入れてから
+  dev-flow の SessionStart フックを実行する (初回は pwsh のフックが「見つからない」で失敗した表示が出ることがあるが、続けてよい)。
+  ネットワークの設定で github.com からのダウンロードが許されていること
+
+クラウドでは、セッションごとに別のブランチで作業する。そのため:
+
+- フェーズが終わったら、PR を main に取り込んでから新しいセッションで次のフェーズを始める (案内が出る)。`/clear` の代わりに新しいセッションを開いてよい
+- **同じプロジェクトで 2 つのセッションを同時に進めない。** `/dev-flow` は最初に `devflow-state.ps1 check-branches` で、
+  ほかのブランチで dev-flow が進んでいないかを確かめ、進んでいれば始める前に確認する
+- 利用上限で止まったら、上限が戻ってから同じセッションで「続けて」と送る
+- 権限モードは「自動」(auto) にする (起動し直して `bypassPermissions` にすることはできない)
 
 ## 使い方
 
@@ -88,7 +106,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 - タスクファイルには、そのタスク固有の内容 (目的・担当ID・参照すべき設計の節・作るファイル・テストケース・完了条件) だけを書き、設計の内容は写さずに節を参照する。
   参照は「1 行 1 ファイル、節は「見出し」、ID はそのまま」の形で書き、`devflow-state.ps1 task-context <ID>` がそこから読み物
   (タスクファイル + 指した節 + ID の定義行) を機械的に切り出す。実装担当とレビュー担当は、この読み物と conventions.md だけを読む
-- 読み物の大きさは `taskContextBudgetKB` (既定 60KB) 以内にする (超えたら参照を絞るかタスクを分ける)。conventions.md は全タスク共通のことだけにして小さく保つ
+- 読み物の大きさは `taskContextBudgetKB` (既定 40KB) 以内にする (超えたら参照を絞るかタスクを分ける)。conventions.md は全タスク共通のことだけにして小さく保つ
 - レビューは必要最低限で、**1 回だけ**。同じ設計を参照するタスクのまとまりごとに `design-reviewer` を 1 体起動し、実装者が作業を止める、または設計と違う実装をしてしまう点だけを挙げさせる
 - 指摘は再レビューせずに設計へ反映する。上流 (要件・基本設計) の抜けも、上流の方針から推奨が決まるものは推奨で補って決定ツリーの「上流を補った決定」に記録し、
   完了時に件数を報告する。ユーザーに聞くのは、承認済みの決定を覆す・お金や法令・セキュリティなどで上流に根拠がない・同等の案があり推奨を決められないものだけ
@@ -210,6 +228,7 @@ scripts/
   devflow-trace.ps1 (.sh)     # ID の網羅性検証、traceability.md・各層の ID 一覧 (ids.md) の生成
   devflow-commit.ps1          # コミット規約の機械的な強制
   devflow-install.ps1         # 対象プロジェクトへの導入
+  devflow-setup-cloud.sh      # pwsh がなければ入れる (クラウドのセッション用)
 .devflow/                     # (対象プロジェクトに作られる)
   state.json                  # 現在フェーズ、完了フェーズ、検証ラウンド、追加タスク
   config.json                 # テストコマンド、閾値など (詳細設計で設定)
@@ -218,17 +237,18 @@ scripts/
   notes/<TASK-ID>.md          # タスクの実装メモ (後続のタスクが使う公開の名前・ファイル・注意点。task-context が依存タスクの分を出す)
   dep-changes.md              # 実装中に足した依存の記録
   blocked.md                  # 行き詰まったタスクの記録
-  review-log.md               # review 種別の ID の自己確認の記録 (trace が有無を検査する)
+  review-log.md               # review 種別の ID の自己確認の記録 (trace が有無を検査する) と、実装担当が設計にない細部を決めた記録 ([判断] の行)
   verification-log.md         # 検証ラウンドごとの漏れと追加タスク
   implementer.json            # 実行中の実装担当の記録 (git 管理外)
   orchestrator.json           # オーケストレーターの登録 (git 管理外)
+  context/<TASK-ID>.md        # task-context が書き出すタスクの読み物 (git 管理外)
 ```
 
 ## スクリプト
 
 | スクリプト | 主なコマンド |
 |------------|--------------|
-| `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `task-context <ID>` (タスクの読み物) / `add-dep <ID> <依存 ID> [-Reason]` (依存を足して todo に戻す) / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
+| `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `task-context <ID>\|all` (タスクの読み物を `.devflow/context/<ID>.md` に書き出す) / `check-branches` (ほかのブランチで dev-flow が進んでいないか。exit 5 なら進んでいる) / `add-dep <ID> <依存 ID> [-Reason]` (依存を足して todo に戻す) / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
 | `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
 | `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]`。test は結果ファイルに担当 ID 付きの失敗したテストがあること、feat / refactor / fix は全テストの成功を確かめる |
 
@@ -253,7 +273,8 @@ scripts/
 | `hardLimitPercent` | 85 | この使用率に達したら、作業量にかかわらず引き継ぐ |
 | `maxVerificationRounds` | 3 | 検証ラウンドの上限 |
 | `maxAttemptsPerTest` | 3 | 同じテストでこの回数失敗したら blocked |
-| `taskContextBudgetKB` | 60 | 1 タスクの読み物 (`task-context` の設計部分) の上限。超えたタスクは詳細設計の trace で TASK-CONTEXT-LARGE になる |
+| `concurrentRunHours` | 72 | `check-branches` が、ほかのブランチの dev-flow を「並行して進んでいる」とみなす、`.devflow` の最終更新からの時間 (0 で無制限) |
+| `taskContextBudgetKB` | 40 | 1 タスクの読み物 (`task-context` の設計部分) の上限。超えたタスクは詳細設計の trace で TASK-CONTEXT-LARGE になる |
 | `test.command` | (詳細設計で設定) | 全テストを実行し結果ファイルを出すコマンド。ウォッチモードにしないこと |
 | `test.timeoutSeconds` | 900 | テストの実行がこの秒数を超えたら止め、失敗として扱う (0 で無制限) |
 | `test.resultGlobs` | TRX / JUnit の典型パス | テスト結果ファイルの場所 |
@@ -268,10 +289,10 @@ scripts/
 | 仕組み | 使い方 |
 |--------|--------|
 | スキル | `.claude/skills/dev-flow/SKILL.md` はルーターだけを持ち、現在フェーズの手順書 (`phases/`) と必要な参照資料だけを読み込ませる |
-| SessionStart フック | `/clear` 後 (source=clear): 次フェーズの開始指示を注入する。実装・検証フェーズでは、そのセッションをオーケストレーターとして開始させる。compact 後: 手順書と決定ツリー (実装・検証なら状態と handoff) を読み直させる。起動時: 進行中のフェーズを知らせる |
+| SessionStart フック | `/clear` 後 (source=clear): 次フェーズの開始指示を注入する。実装・検証フェーズでは、そのセッションをオーケストレーターとして開始させる。compact 後: 手順書と決定ツリー (実装・検証なら状態と handoff) を読み直させる。起動時: 進行中のフェーズを知らせる (クラウドで、前のフェーズが終わって次が未開始なら、最初の短い一言で開始させる)。`ensure-pwsh.sh`: クラウドで pwsh がなければ入れてから上を実行する |
 | Stop フック | `devflow-state.ps1 run start` で登録したオーケストレーターのセッションでだけ動く。作業が残っていれば `decision: block` で応答を終えさせず、次の実装担当の起動や検証の続きを指示する。同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許す。タスク一覧が読めない (0 件) ときは止めずに終了を許し、人に知らせる |
 | PostToolUse フック | 入力の `agent_type` が `tdd-implementer` のときだけ動く。実装担当の transcript (`<セッションの transcript と同じ場所>/<session_id>/subagents/agent-<agent_id>.jsonl`) の最新の応答の `message.usage` (`input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`) を `contextWindowTokens` で割って使用率とし、閾値超えなら `additionalContext` で引き継ぎを指示する |
 | SubagentStart フック | `tdd-implementer` の起動時に `.devflow/implementer.json` (開始時刻・開始時の使用量) を作る |
 | SubagentStop フック | `tdd-implementer` が終えようとしたとき、閾値未満で実行可能なタスクが残っていれば `decision: block` で次のタスクへ進ませる。閾値超えなら、`handoff.md` が開始後に更新され、作業ツリーがクリーンになるまで終えさせない。同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許す |
 | サブエージェント | `spec-reviewer` (読み取りのみ)、`design-reviewer` (読み取りのみ)、`screen-designer`、`tdd-implementer`。いずれもメイン会話と同じモデル (`model: inherit`) |
-| フックの起動方法 | `"command": "pwsh", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/<名前>.ps1"]` の exec 形式で、OS やシェルに依存しない |
+| フックの起動方法 | `"command": "pwsh", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.claude/hooks/<名前>.ps1"]` の exec 形式で、OS やシェルに依存しない (`ensure-pwsh.sh` だけは `bash`。pwsh があれば何もしない) |

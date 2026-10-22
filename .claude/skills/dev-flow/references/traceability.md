@@ -102,8 +102,8 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 | INVALID-VERIFY | 検証方法が test/review/manual でない | ● | ● | ● | |
 | UNKNOWN-REF | 存在しない ID への参照 (ドキュメント・テストコード・テスト名・デザインの data-id) | ● | ● | ● | ● |
 | NO-UPSTREAM | 基本設計・詳細設計の ID に上流 ID がない | ● | ● | ● | |
-| REQ-NOT-COVERED | 要件 ID がどの設計 ID からも参照されていない | 警告 | ● | ● | |
-| NOT-ASSIGNED | test/review の ID がどのタスクにも割り当てられていない | 警告 | ● | ● | |
+| REQ-NOT-COVERED | 要件 ID がどの設計 ID からも参照されていない | 警告 (基本設計がまだなければ件数だけ) | ● | ● | |
+| NOT-ASSIGNED | test/review の ID がどのタスクにも割り当てられていない | 件数だけ | ● | ● | |
 | TASK-* / UNKNOWN-DEP / DEP-CYCLE | タスクファイルと index の不整合、依存の誤り・循環、テストケース不足 | 警告 | ● | ● | ● |
 | TASK-NOT-DONE | 完了していないタスク (blocked も漏れ扱い) | | | ● | |
 | NO-TEST / TEST-NOT-PASSING | test の ID を名前に含むテストがない / 成功していない | | | ● | ● (担当分) |
@@ -112,11 +112,11 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 | DESIGN-NO-STATE | 画面の状態 ID (`SCR-*-S*`) に対応するデザイン (`data-state-id`) がない (デザインがあるときだけ) | ● | ● | ● | |
 | DESIGN-NO-ELEMENT | 画面の要素・操作 ID (`SCR-*-E*` / `SCR-*-A*`) に対応するデザインの要素 (`data-id`) がない | 警告 | 警告 | 警告 | |
 | REVIEW-NOT-RECORDED | review の ID の自己確認が `.devflow/review-log.md` に記録されていない | | | ● (done のタスク) | ● (担当分) |
-| FILE-MISSING | タスクの「作成・変更するファイル」が存在しない (バッククォートで囲んだ、拡張子のあるパスだけを数える。シグネチャ・ディレクトリ・コード中の名前は数えない) | | | | ● |
-| TASK-DEP-MISSING | 他のタスクが「新規」で作るファイルを変更・利用するのに、そのタスクが依存 (祖先) にない | | ● | | |
-| TASK-DEP-SUSPECT | 「参照すべき設計」で指した ID を他のタスクだけが担当していて、そのタスクが依存 (祖先) にない | | 警告 | | |
-| TASK-REF-NOT-FOUND | 「参照すべき設計」の参照先 (ファイル・「」の見出し) が見つからない | | ● | | |
-| TASK-CONTEXT-LARGE | タスクの読み物 (`devflow-state.ps1 task-context` の出力) が `taskContextBudgetKB` を超える | | ● | | |
+| FILE-MISSING | タスクの「作成・変更するファイル」が存在しない (括弧の外でバッククォートで囲んだ、拡張子のあるパスだけを数える。シグネチャ・ディレクトリ・コード中の名前・括弧の中の説明は数えない。ディレクトリのない名前は既知の拡張子のときだけ) | | | | ● |
+| TASK-DEP-MISSING | 他のタスクが「新規」で作るファイルを変更・利用するのに、そのタスクが依存 (祖先) にない (作るのが後続のタスクなら、ファイルの一覧から外すよう案内する) | | ● (done のタスクは警告) | | |
+| TASK-DEP-SUSPECT | 「参照すべき設計」で指した ID を他のタスクだけが担当していて、そのタスクが依存 (祖先) にない (担当が後続のタスクだけなら数えない) | | 警告 | | |
+| TASK-REF-NOT-FOUND | 「参照すべき設計」の参照先 (ファイル・「」の見出し・ID の定義行) が見つからない | | ● (done のタスクは警告) | | |
+| TASK-CONTEXT-LARGE | タスクの読み物 (`devflow-state.ps1 task-context` の出力) が `taskContextBudgetKB` を超える | | ● (done のタスクは警告) | | |
 
 `-UpdateIndexes` を付けると、各 `index.md` と同じディレクトリに ID 一覧 `ids.md` を生成し、index.md に ids.md へのリンクを置く。
 `-NoRun` を付けるとテストを実行せず、既存の結果ファイルで判定する。
@@ -141,5 +141,5 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 - `test.resultGlobs`: 結果ファイル (JUnit XML または TRX) の場所。trace は実行前にこれらを削除する
 - `test.files`: テストコードの場所 (未定義 ID の検出に使う)
 - `source.files`: 本番コードの場所 (スタブ残りの検出に使う)
-- `taskContextBudgetKB`: 1 タスクの読み物 (タスクファイル + 参照すべき設計で指した節・ID の定義行) の上限 KB (既定 60)。
+- `taskContextBudgetKB`: 1 タスクの読み物 (タスクファイル + 参照すべき設計で指した節・ID の定義行) の上限 KB (既定 40)。
   実装担当がタスクごとに読む量を抑えるため、詳細設計の網羅性ゲートで超えたタスクを TASK-CONTEXT-LARGE にする

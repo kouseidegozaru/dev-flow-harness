@@ -90,6 +90,7 @@ $ignore = @(
     '.devflow/implementer.json',
     '.devflow/orchestrator.json',
     '.devflow/logs/',
+    '.devflow/context/',
     '.devflow/trace-*.json'
 )
 $gi = Join-Path $dst '.gitignore'
