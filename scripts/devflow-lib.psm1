@@ -8,7 +8,7 @@ Set-StrictMode -Version 3.0
 
 $script:PhaseOrder = @(
     'vision', 'requirements', 'basic-design', 'detailed-design',
-    'implementation', 'verification', 'done'
+    'implementation', 'verification', 'deployment', 'done'
 )
 $script:PhaseFiles = @{
     'vision'          = '01-vision.md'
@@ -17,6 +17,7 @@ $script:PhaseFiles = @{
     'detailed-design' = '04-detailed-design.md'
     'implementation'  = '05-implementation.md'
     'verification'    = '06-verification.md'
+    'deployment'      = '07-deployment.md'
 }
 $script:PhaseLabels = @{
     'vision'          = '企画・構想'
@@ -25,6 +26,7 @@ $script:PhaseLabels = @{
     'detailed-design' = '詳細設計'
     'implementation'  = '実装'
     'verification'    = '検証'
+    'deployment'      = 'デプロイ'
     'done'            = '完了'
 }
 $script:TaskStatuses = @('todo', 'in_progress', 'done', 'blocked')
@@ -104,6 +106,11 @@ function Get-DefaultConfig {
         source                  = [ordered]@{
             files = @('src/**')
         }
+        # デプロイ先 (詳細設計で設定)。targets の順に実行する。秘密の値は書かず、requiredEnv に環境変数名だけを書く
+        deploy                  = [ordered]@{
+            timeoutSeconds = 1800
+            targets        = @()   # @{ name; command; smokeCommand; rollbackCommand; requiredEnv = @(); confirm }
+        }
         # コメント中の TODO/FIXME/XXX だけを大文字小文字を区別して拾う (識別子の Todo などに反応しないため)
         stubPatterns            = @(
             '(?-i)(//|#|/\*|--|<!--|\*)\s*(TODO|FIXME|XXX)\b', 'NotImplementedException', 'NotImplementedError',
@@ -159,6 +166,9 @@ function New-DevflowState {
             round       = 0
             roundOpen   = $false
             addedTasks  = @()
+        }
+        deployment      = [ordered]@{
+            results     = [ordered]@{}   # デプロイ先の名前 → 最後の結果 (status, commit, at, log)
         }
         updatedAt       = (Get-Date).ToString('o')
     }
@@ -273,22 +283,20 @@ function Get-TestCommandName([string]$Command) {
     return $null
 }
 
-function Invoke-TestCommand([string]$Root, $Config, [string]$LogRel) {
-    # 結果ファイルを消してから test.command を実行する。test.timeoutSeconds を超えたらプロセスツリーごと止める。
+function Invoke-LoggedCommand([string]$Root, [string]$Command, [string]$LogRel, [int]$TimeoutSeconds, [string]$TimeoutName) {
+    # コマンドを pwsh で実行し、標準出力と標準エラーを $LogRel に書く。$TimeoutSeconds を超えたらプロセスツリーごと止める (0 以下で無制限)。
     # 戻り値: @{ ExitCode; TimedOut; Log (ルートからの相対パス) }
-    foreach ($rel in Find-FilesOnDisk $Root $Config.test.resultGlobs) { Remove-Item -LiteralPath (Join-DevflowPath $Root $rel) -Force }
     $log = Join-DevflowPath $Root $LogRel
     New-Item -ItemType Directory -Force -Path (Split-Path $log) | Out-Null
     $err = "$log.stderr"
-    $cmd = "`$PSStyle.OutputRendering = 'PlainText'`n" + [string]$Config.test.command
+    $cmd = "`$PSStyle.OutputRendering = 'PlainText'`n" + $Command
     $enc = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($cmd))
     $p = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-NonInteractive', '-OutputFormat', 'Text', '-EncodedCommand', $enc) `
         -WorkingDirectory $Root -NoNewWindow -PassThru -RedirectStandardOutput $log -RedirectStandardError $err
     $null = $p.Handle   # ExitCode を確実に取れるようにする
-    $sec = [int]$Config.test.timeoutSeconds
     $timedOut = $false
-    if ($sec -gt 0) {
-        if (-not $p.WaitForExit($sec * 1000)) {
+    if ($TimeoutSeconds -gt 0) {
+        if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
             $timedOut = $true
             try { $p.Kill($true) } catch {}
             $p.WaitForExit()
@@ -299,9 +307,16 @@ function Invoke-TestCommand([string]$Root, $Config, [string]$LogRel) {
         if ($e) { Add-Content -LiteralPath $log -Value $e -Encoding utf8 }
         Remove-Item -LiteralPath $err -Force
     }
-    if ($timedOut) { Add-Content -LiteralPath $log -Value "dev-flow: test.timeoutSeconds ($sec 秒) を超えたため停止しました" -Encoding utf8 }
+    if ($timedOut) { Add-Content -LiteralPath $log -Value "dev-flow: $TimeoutName ($TimeoutSeconds 秒) を超えたため停止しました" -Encoding utf8 }
     $code = if ($timedOut) { 124 } else { $p.ExitCode }
     return [pscustomobject]@{ ExitCode = $code; TimedOut = $timedOut; Log = $LogRel }
+}
+
+function Invoke-TestCommand([string]$Root, $Config, [string]$LogRel) {
+    # 結果ファイルを消してから test.command を実行する。test.timeoutSeconds を超えたらプロセスツリーごと止める。
+    # 戻り値: @{ ExitCode; TimedOut; Log (ルートからの相対パス) }
+    foreach ($rel in Find-FilesOnDisk $Root $Config.test.resultGlobs) { Remove-Item -LiteralPath (Join-DevflowPath $Root $rel) -Force }
+    return Invoke-LoggedCommand $Root ([string]$Config.test.command) $LogRel ([int]$Config.test.timeoutSeconds) 'test.timeoutSeconds'
 }
 
 function Get-ResultExcludePathspecs($Config) {

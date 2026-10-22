@@ -1,6 +1,7 @@
 # フェーズ 6: 検証 (完全自動)
 
 実装フェーズに続けて、同じオーケストレーターのセッションで自動で実行する。**ユーザーには質問しない。**
+終わったら、続けて同じセッションでデプロイフェーズ ([07-deployment.md](07-deployment.md)) を実行する。
 設計で決めたことがすべて実装されているかを機械チェック (`devflow-trace.ps1 -Mode full`) で確認し、漏れがあれば追加タスクにして実装フェーズに戻す。
 
 コードを読んで突き合わせる監査は行わない (トークン消費が大きいため)。`review` 種別の ID は、実装時に `tdd-implementer` が
@@ -65,7 +66,9 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 
 ### 4. 最終レポート
 
-`docs/verification-report.md` を `templates/verification-report.md` の形で書く:
+`docs/verification-report.md` を `templates/verification-report.md` の形で書く。
+冒頭の判定は、未解決の漏れがなければ `判定: 漏れなし`、あれば `判定: 未解決あり` と書く (デプロイフェーズの `devflow-deploy.ps1` がこの文字列を読み、
+「漏れなし」でなければデプロイしない。blocked のタスクの有無は別に確かめる):
 
 - 全 ID の網羅状況 (`docs/traceability.md` の集計を転記)
 - blocked のまま残ったタスクとその理由 (対象は `impl-status` で今も blocked のタスクだけ。理由は `.devflow/blocked.md` のそのタスクの最後の記録から。「解除」の記録があるものは載せない)
@@ -81,16 +84,16 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 ```bash
 pwsh -NoProfile -File scripts/devflow-state.ps1 complete-phase verification
 pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind docs -Scope verification -Message "検証レポート"
-pwsh -NoProfile -File scripts/devflow-state.ps1 run stop
 ```
 
-phase が `done` になる。ユーザーに最終レポートの要点 (漏れ・blocked・人が確認する項目) を伝えて終える。
+phase が `deployment` になる。`run stop` はせず (オーケストレーターのまま)、ユーザーへの報告もまだしないで、
+続けて [07-deployment.md](07-deployment.md) を読み、このセッションでデプロイフェーズを実行する (検証レポートの要点は、デプロイの結果と一緒に最後に伝える)。
 
 ## 完了条件
 
 - [ ] `devflow-trace.ps1 -Mode full` の漏れが、blocked 起因・manual のものだけ (または 0 件)。あるいは最大ラウンドに達した
 - [ ] `docs/verification-report.md` に上の項目がすべてある
-- [ ] phase が `done` になり、コミット済み
+- [ ] phase が `deployment` になり、コミット済み
 
 ## コンテキストが圧縮されたとき
 

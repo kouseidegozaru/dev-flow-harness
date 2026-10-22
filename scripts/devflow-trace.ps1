@@ -34,7 +34,7 @@ $root = Get-DevflowRoot
 $config = Get-DevflowConfig $root
 $idre = Get-IdRegex $config
 $docsRoot = Join-DevflowPath $root 'docs'
-$generated = @('docs/traceability.md', 'docs/verification-report.md')
+$generated = @('docs/traceability.md', 'docs/verification-report.md', 'docs/deployment-report.md')
 
 if ($Mode -eq 'task' -and -not $Task) { Write-Error '-Mode task には -Task <TASK-ID> が必要です'; exit 2 }
 

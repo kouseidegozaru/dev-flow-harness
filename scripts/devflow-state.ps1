@@ -141,6 +141,10 @@ switch ($Command) {
             $s.verification = [ordered]@{ round = 0; roundOpen = $false; addedTasks = @() }
             $s.implementation.taskBase = [ordered]@{}
         }
+        if ($idx -lt [Array]::IndexOf($order, 'deployment')) {
+            # デプロイより前からのやり直し: デプロイの結果を消す (redo deployment では残し、成功済みのデプロイ先を飛ばさせる)
+            $s.deployment = [ordered]@{ results = [ordered]@{} }
+        }
         Write-DevflowState $root $s
         Write-Output "phase を $Arg1 に設定しました"
     }
