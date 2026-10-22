@@ -7,8 +7,16 @@
   "maxAttemptsPerTest": 3,
   "concurrentRunHours": 72,
   "taskContextBudgetKB": 40,
+  "implementer": {
+    "tasksPerAgent": 1,
+    "tools": []
+  },
+  "acceptance": {
+    "files": ["tests/acceptance/**"]
+  },
   "test": {
     "command": "dotnet test --logger trx",
+    "setupCommand": "dotnet restore",
     "timeoutSeconds": 900,
     "resultGlobs": ["**/TestResults/*.trx"],
     "files": ["tests/**"]
@@ -20,6 +28,7 @@
     "timeoutSeconds": 1800,
     "rollbackOnFailure": true,
     "allowWithIssues": false,
+    "_comment_allowWithIssues": "本番のデプロイ先 (production: true か名前が prod / production / 本番) には効かない。本番は台帳の open の処置-B・要回答が 0 件のときだけ",
     "vault": {
       "name": "Doppler",
       "getCommand": "doppler secrets get {name} --plain",
@@ -44,6 +53,7 @@
       },
       {
         "name": "production",
+        "production": true,
         "command": "pwsh -NoProfile -File scripts/deploy.ps1 -Env production",
         "smokeCommand": "pwsh -NoProfile -File scripts/smoke.ps1 -Env production",
         "rollbackCommand": "pwsh -NoProfile -File scripts/rollback.ps1 -Env production",

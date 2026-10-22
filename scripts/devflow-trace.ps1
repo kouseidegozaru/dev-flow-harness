@@ -262,6 +262,36 @@ foreach ($d in $defs.Values) {
     }
 }
 
+# 決定台帳 (.devflow/decisions/ledger.md) と受け入れ例 (要件の Then の印)。台帳・lock がないプロジェクト (以前の版で進めたもの) では、その検査を飛ばすか警告にする
+$ledgerRows = Read-Ledger $root
+$examples = Get-RequirementExamples $root $config
+$hasLock = Test-Path -LiteralPath (Get-ExampleLockPath $root)
+$softCodes = [System.Collections.Generic.List[string]]::new()
+if ($null -ne $ledgerRows) {
+    foreach ($i in Get-LedgerIssues $root $config $ledgerRows) { Add-Issue $i.code $i.id $i.message $i.where }
+    foreach ($i in Get-ExampleDecIssues $examples $ledgerRows) { Add-Issue $i.code $i.id $i.message $i.where }
+    # amend (論点が「変更:」の確定の行) で足した要件は、基本設計の ID から参照されていること (要件だけ足して設計を飛ばしていないか)
+    foreach ($r in @($ledgerRows | Where-Object { $_.Topic -like '変更:*' })) {
+        foreach ($e in @($examples.Values | Where-Object { $_.Decs -contains $r.Dec })) {
+            if (-not $defs.Contains($e.Id)) { continue }
+            if (@($defs[$e.Id].downstream | Where-Object { $defs[$_].layer -eq 'basic' }).Count -eq 0) {
+                Add-Issue 'AMEND-NO-BASIC' $e.Id "変更 $($r.Dec) で足した要件が、基本設計のどの ID からも参照されていません (detailed-designer に 03 の差分を設計させる)" $e.Where
+            }
+        }
+    }
+}
+foreach ($i in Get-ExampleLockIssues $root $config $examples) { Add-Issue $i.code $i.id $i.message $i.where }
+[void]$softCodes.Add('EXAMPLE-UNLOCKED')
+if ($Mode -eq 'docs') { [void]$softCodes.Add('EXAMPLE-CHANGED') }
+if ($Mode -eq 'full') {
+    # 実装の後: 文言の照合の当たりや根拠の書き方で検証を止めない (人の確認に回す)
+    foreach ($c in 'DEC-UNCITED', 'LEDGER-BASIS') { [void]$softCodes.Add($c) }
+    foreach ($i in Test-AcceptanceExamples $root $config $examples) { Add-Issue $i.code $i.id $i.message $i.where }
+    # 照合器の書き方の差で正しいテストを止めないため、値・順序の外れは警告 (最終レポートの「人が確認する項目」に載る)
+    foreach ($c in 'EXAMPLE-NOT-IN-AT', 'EXAMPLE-ORDER') { [void]$softCodes.Add($c) }
+    if (-not $hasLock) { [void]$softCodes.Add('REQ-NO-ACCEPTANCE') }
+}
+
 # 画面デザイン (docs/03-basic-design/designs/ の HTML) の data-id / data-state-id と画面仕様の ID の突き合わせ。
 # デザインがないプロジェクト (画面のないもの) では何もしない
 $designFiles = @($allFiles | Where-Object { $_ -like 'docs/03-basic-design/designs/*' -and $_ -match '\.html?$' })
@@ -456,7 +486,7 @@ if ($Mode -eq 'docs') {
 # 実装の前に止めるための検査 (依存の漏れ・参照先・読み物の大きさ) は、done のタスクでは意味がないので警告に回す
 # (以前の版で書いたタスクに新しい検査がかかり、検証フェーズの -Mode design が毎回止まっていたため)
 $preImpl = @('TASK-DEP-MISSING', 'TASK-REF-NOT-FOUND', 'TASK-CONTEXT-LARGE')
-$soft = @($issues | Where-Object { $_.code -in @('DESIGN-NO-ELEMENT', 'TASK-DEP-SUSPECT') -or ($_.code -in $preImpl -and $tasks.Contains($_.id) -and $tasks[$_.id].status -eq 'done') })
+$soft = @($issues | Where-Object { $_.code -in @('DESIGN-NO-ELEMENT', 'TASK-DEP-SUSPECT') -or $softCodes.Contains($_.code) -or ($_.code -in $preImpl -and $tasks.Contains($_.id) -and $tasks[$_.id].status -eq 'done') })
 if ($soft.Count -gt 0) {
     foreach ($i in $soft) { $warnings.Add($i); [void]$issues.Remove($i) }
 }
@@ -556,6 +586,12 @@ if ($Mode -ne 'task' -and -not $NoReport -and (Test-Path -LiteralPath $docsRoot)
             [void]$sb.AppendLine("- $($m.id): $($m.summary) ($($m.where)) 担当: $(($m.tasks | Sort-Object) -join ', ') / $rec")
         }
     }
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('## 人が確認する項目: 受け入れ例と受け入れテストの照合 (警告)')
+    [void]$sb.AppendLine('')
+    $exw = @($warnings | Where-Object { $_.code -in @('EXAMPLE-NOT-IN-AT', 'EXAMPLE-ORDER', 'REQ-NO-ACCEPTANCE', 'DEC-UNCITED') })
+    if ($exw.Count -eq 0) { [void]$sb.AppendLine('なし') }
+    else { foreach ($w in $exw) { [void]$sb.AppendLine("- [$($w.code)] $($w.id) $($w.message) ($($w.where))") } }
     [void]$sb.AppendLine('')
     [void]$sb.AppendLine('## 手動確認が必要な項目 (manual)')
     [void]$sb.AppendLine('')

@@ -9,6 +9,9 @@
   -Kind feat     : Green。全テストが成功することを確認してからコミットする
   -Kind refactor : Refactor。全テストが成功することを確認してからコミットする
   -Kind fix      : 検証フェーズなどでの修正。全テスト成功が必要
+  -Kind acceptance : 受け入れテスト (TASK-AT-<領域>)。全テスト成功が必要 (実装済みの機能に書くので Red は求めない)。
+                   コミットの後、担当の要件の受け入れ例 (承認した Then の印の値) が、受け入れテストの期待値側にあるかを照合し、
+                   外れを警告として 1 回だけ示す (拒否はしない)
   -Kind docs / chore : テストを実行しない
 
   メッセージは "<kind>(<scope>): <message>" になる。
@@ -18,7 +21,7 @@
   pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind test -Scope TASK-003 -Message "期限切れ判定のテストを追加"
 #>
 param(
-    [Parameter(Mandatory)][ValidateSet('test', 'feat', 'refactor', 'fix', 'docs', 'chore')][string]$Kind,
+    [Parameter(Mandatory)][ValidateSet('test', 'feat', 'refactor', 'fix', 'acceptance', 'docs', 'chore')][string]$Kind,
     [Parameter(Mandatory)][string]$Scope,
     [Parameter(Mandatory)][string]$Message,
     [string[]]$Paths = @()   # 省略時は git add -A
@@ -44,7 +47,14 @@ function Invoke-Tests {
 }
 
 function Write-LogTail($r) {
-    Get-Content -LiteralPath (Join-DevflowPath $root $r.Log) -Tail 30 | ForEach-Object { Write-Output "  $_" }
+    $tail = @(Get-Content -LiteralPath (Join-DevflowPath $root $r.Log) -Tail 30 | Where-Object { $_.Trim() })
+    $tail | ForEach-Object { Write-Output "  $_" }
+    # テストランナーが結果をファイルにだけ出す設定だと、ログが空になる。失敗したテストの名前と結果ファイルを出す
+    $failed = @(Read-TestResultFiles $root $config | Where-Object { $_.outcome -notin @('passed', 'skipped', 'notexecuted') })
+    if ($failed.Count -gt 0) {
+        Write-Output "  失敗したテスト ($($failed.Count) 件): $(($failed | Select-Object -First 10 | ForEach-Object { $_.name }) -join '; ')"
+        Write-Output "  (失敗の内容は結果ファイル $(($failed | ForEach-Object { $_.file } | Select-Object -Unique) -join ', ') の failure 要素)"
+    } elseif ($tail.Count -eq 0) { Write-Output '  (ログも結果ファイルも空。テストコマンドが結果ファイルを出す前に失敗した可能性がある)' }
 }
 
 $pending = @(Get-UncommittedChanges $root $config $Paths)
@@ -84,7 +94,7 @@ switch ($Kind) {
         }
         Write-Output "Red 確認: テストは失敗しています (exit $($r.ExitCode)、失敗: $(($failed | Select-Object -First 5 | ForEach-Object { $_.name }) -join '; '))"
     }
-    { $_ -in @('feat', 'refactor', 'fix') } {
+    { $_ -in @('feat', 'refactor', 'fix', 'acceptance') } {
         $r = Invoke-Tests
         if ($r.ExitCode -ne 0) {
             Write-Output "$Kind コミットを拒否: テストが失敗しています (exit $($r.ExitCode))。ログ末尾:"
@@ -111,4 +121,15 @@ if ($LASTEXITCODE -eq 0) { Write-Output 'コミットする変更がありませ
 & git commit -q -m "${Kind}(${Scope}): $Message"
 if ($LASTEXITCODE -ne 0) { exit 2 }
 Write-Output ("コミットしました: " + (& git log -1 --format='%h %s'))
+if ($Kind -eq 'acceptance') {
+    # 承認した例の値と、受け入れテストの期待値側の照合 (警告だけ。書き方の差で正しいテストを止めないため)
+    $assigned = @(Get-TaskAssignedIds $root $config $Scope | Where-Object { $_ -like 'REQ-*' })
+    $ex = Get-RequirementExamples $root $config
+    $warn = @(Test-AcceptanceExamples $root $config $ex $assigned)
+    if ($warn.Count -eq 0) { Write-Output "受け入れ例の照合: OK (要件 $($assigned.Count) 件)" }
+    else {
+        Write-Output "受け入れ例の照合: 警告 $($warn.Count) 件 (拒否はしない。例の値をアサーションの期待値側 (toBe / assert.strictEqual の第 2 引数など) に書いたかを見直し、直すなら fix でコミットする。直さなければ最終レポートで人が確認する):"
+        $warn | ForEach-Object { Write-Output "  - [$($_.code)] $($_.id) $($_.message) ($($_.where))" }
+    }
+}
 exit 0

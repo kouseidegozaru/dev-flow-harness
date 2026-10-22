@@ -3,7 +3,7 @@
   dev-flow ハーネスを対象プロジェクトに導入する。
 
 .DESCRIPTION
-  コピーするもの: .claude/skills/dev-flow、.claude/agents の 3 エージェント、.claude/hooks、scripts/devflow-*
+  コピーするもの: .claude/skills/dev-flow、.claude/agents の 5 エージェント、.claude/hooks、scripts/devflow-*
   .claude/settings.json は、既存のものがあればフックを追記し、statusLine は未設定のときだけ設定する。
   .gitignore に dev-flow の一時ファイルを追記する。
 
@@ -44,7 +44,19 @@ function Copy-Item2([string]$Rel) {
 
 Copy-Item2 '.claude/skills/dev-flow'
 if (-not (Test-Path -LiteralPath (Join-Path $dst '.gitattributes'))) { Copy-Item2 '.gitattributes' } elseif (-not (Select-String -LiteralPath (Join-Path $dst '.gitattributes') -Pattern '*.sh' -SimpleMatch -Quiet)) { Add-Content -LiteralPath (Join-Path $dst '.gitattributes') -Value '*.sh text eol=lf'; Write-Output 'update: .gitattributes' }
-foreach ($a in 'spec-reviewer', 'design-reviewer', 'screen-designer', 'tdd-implementer') { Copy-Item2 ".claude/agents/$a.md" }
+foreach ($a in 'spec-reviewer', 'design-reviewer', 'screen-designer', 'detailed-designer', 'tdd-implementer') { Copy-Item2 ".claude/agents/$a.md" }
+# 実装担当のツールの上書き (.devflow/config.json の implementer.tools。例: MCP のツールを足す)
+$cfgPath = Join-Path $dst '.devflow/config.json'
+if (Test-Path -LiteralPath $cfgPath) {
+    try { $pc = Get-Content -LiteralPath $cfgPath -Raw | ConvertFrom-Json } catch { $pc = $null }
+    if ($pc -and $pc.PSObject.Properties['implementer'] -and $pc.implementer.PSObject.Properties['tools'] -and @($pc.implementer.tools).Count -gt 0) {
+        $ap = Join-Path $dst '.claude/agents/tdd-implementer.md'
+        $txt = Get-Content -LiteralPath $ap -Raw
+        $txt = [regex]::Replace($txt, '(?m)^tools:.*$', 'tools: ' + (@($pc.implementer.tools) -join ', '), 1)
+        Set-Content -LiteralPath $ap -Value $txt -Encoding utf8NoBOM -NoNewline
+        Write-Output "update: .claude/agents/tdd-implementer.md の tools を implementer.tools で上書き ($(@($pc.implementer.tools) -join ', '))"
+    }
+}
 # 廃止したファイル (以前の版で導入されたもの) を消す
 foreach ($old in '.claude/agents/implementation-auditor.md', 'scripts/devflow-audit.ps1', '.devflow/audit-plan.json',
                  'scripts/devflow-implement.ps1', 'scripts/devflow-implement.sh', '.devflow/loop-session.json') {
@@ -93,6 +105,7 @@ $ignore = @(
     '.devflow/context/',
     '.devflow/trace-*.json'
 )
+# (examples.lock.json・decisions/ledger.md・debrief.md は承認の記録なので git に入れる)
 $gi = Join-Path $dst '.gitignore'
 $cur = if (Test-Path -LiteralPath $gi) { Get-Content -LiteralPath $gi } else { @() }
 $add = @($ignore | Where-Object { $cur -notcontains $_ })
@@ -100,4 +113,7 @@ if ($add.Count -gt 0) { Add-Content -LiteralPath $gi -Value (@('') + $add) -Enco
 
 Write-Output ''
 Write-Output "導入しました: $dst"
-Write-Output '次の手順: 対象プロジェクトで claude を起動し、/dev-flow を実行してください'
+Write-Output '次の手順:'
+Write-Output "1. 導入したファイルをコミットする (後のフェーズのコミットに混ざらないように): git -C '$dst' add -A; git -C '$dst' commit -m 'chore: dev-flow を導入'$(if ($Force) { ' (更新なら「dev-flow を更新」)' })"
+Write-Output '2. クラウド (claude.ai/code) で使うなら、そのコミットを push してからセッションを開く'
+Write-Output '3. 対象プロジェクトで claude を起動し、/dev-flow を実行する (詳細設計より後のフェーズで止まっていたなら、権限モードを確認の少ないもの (クラウドは「自動」) にしてから「続けて」)'

@@ -1,7 +1,9 @@
 # SubagentStop フック (matcher: tdd-implementer)
 #
-# 1 体の実装担当に、コンテキストが閾値を超えるまでタスクを続けてこなさせる。
-# 1. 閾値超え: handoff.md がこの実装担当の開始後に更新済み かつ 作業ツリーがクリーンなら終了を許可。
+# 1 体の実装担当に、担当分のタスク (implementer.tasksPerAgent、既定 1) を処理し終えるまで続けさせる。
+# 0. 担当分の処理: 開始後に done か blocked のタスクが tasksPerAgent 件以上増え、作業ツリーがクリーンなら終了を許可する
+#    (補償タスク・再試行も新しい 1 体で行い、前のタスクの読み物を抱えないため)。tasksPerAgent が 0 なら従来どおり閾値まで続ける。
+# 1. 閾値超え (1 タスクが 1 体に収まらないときの非常口): handoff.md がこの実装担当の開始後に更新済み かつ 作業ツリーがクリーンなら終了を許可。
 #    そうでなければ終了を止めて、引き継ぎ (handoff.md の更新とコミット) を指示する。
 # 2. 閾値未満で実行可能なタスクが残っている: 終了を止めて、次のタスクに進ませる。
 # 3. 実行可能なタスクがない (全部完了、または残りが blocked とそれに依存するものだけ): 終了を許可する。
@@ -36,6 +38,18 @@ function Block([string]$Reason) {
     exit 0
 }
 
+$per = 0
+if ($config.Contains('implementer') -and $config.implementer -and $config.implementer.Contains('tasksPerAgent')) { $per = [int]$config.implementer.tasksPerAgent }
+if ($per -gt 0) {
+    $startCount = if ($run.Contains('processedAtStart') -and $null -ne $run.processedAtStart) { [int]$run.processedAtStart } else { 0 }
+    $processed = (Get-ProcessedTaskCount $root) - $startCount
+    if ($processed -ge $per) {
+        $dirty = @(Get-UncommittedChanges $root $config)
+        if ($dirty.Count -eq 0) { exit 0 }
+        Block "担当のタスクは処理済み。未コミットの変更 ($($dirty.Count) 件) を ``devflow-commit.ps1 -Kind chore`` でコミットしてから、報告して終了すること。"
+    }
+}
+
 $usage = Get-AgentContextUsage $config $in
 if ($usage -and -not $run.baseTokens) { $run.baseTokens = $usage.Tokens; Write-ImplementerRun $root $run }
 $over = Test-ContextOver $config $usage $run.baseTokens
@@ -53,6 +67,9 @@ if ($over) {
 }
 
 $ready = Get-ReadyTask @(Read-TaskIndex $root $config)
+if ($ready -and $per -gt 0) {
+    Block "まだ終了しないこと。tdd-implementer の手順に従い、タスク $($ready.Id) ($($ready.Title)) を done にするか、行き詰まったら blocked にしてから報告して終えること。"
+}
 if ($ready) {
     Block "まだ終了しないこと。コンテキストに余裕があるので、tdd-implementer の手順に従い次のタスク $($ready.Id) ($($ready.Title)) に進むこと。"
 }

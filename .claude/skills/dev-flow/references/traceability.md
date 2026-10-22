@@ -118,6 +118,17 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 | TASK-REF-NOT-FOUND | 「参照すべき設計」の参照先 (ファイル・「」の見出し・ID の定義行) が見つからない | | ● (done のタスクは警告) | | |
 | TASK-CONTEXT-LARGE | タスクの読み物 (`devflow-state.ps1 task-context` の出力) が `taskContextBudgetKB` を超える | | ● (done のタスクは警告) | | |
 
+| LEDGER-INVALID / LEDGER-BASIS | 決定台帳の行の誤り (区分・状態・照合・DEC の重複) / 根拠の ID・逐語引用が実在しない | ● | ● | ● (BASIS は警告) | |
+| DEC-UNKNOWN | 台帳にない DEC の引用 | ● | ● | ● | |
+| DEC-UNCITED | 台帳の確定・仮の行の照合に当たるのに、その DEC を書いていない行 (docs/ の全行。`DEC 対象外: DEC-…` の行は除く) | ● | ● | 警告 | |
+| DEC-STALE | 覆した決定の旧照合に当たる行が残っている (docs/ の全行: 表の行・地の文・タスクファイル) | ● | ● | ● | |
+| DEC-NOT-IN-EXAMPLE | DEC を引用する test の要件の Then に、その DEC の印 (`` `値` [DEC-…] ``) がない | ● | ● | ● | |
+| EXAMPLE-CHANGED | 承認時に凍結した受け入れ例 (`.devflow/examples.lock.json`) と今の要件の例が違う (lock がなければ検査しない) | 警告 | ● | ● | |
+| EXAMPLE-UNLOCKED | 承認後に足された受け入れ例 (amend の後は `relock`) | 警告 | 警告 | 警告 | |
+| AMEND-NO-BASIC | amend (台帳の論点が「変更:」) で足した要件が、基本設計のどの ID からも参照されていない | ● | ● | ● | |
+| REQ-NO-ACCEPTANCE | 受け入れ例のある test の要件に `[AT][REQ-…]` の受け入れテストがない (lock がなければ警告) | | | ● | |
+| EXAMPLE-NOT-IN-AT / EXAMPLE-ORDER | 受け入れ例の値が、受け入れテストのアサーションの期待値側にない / 並び順を確かめていない | | | 警告 (最終レポートの人が確認する項目) | |
+
 `-UpdateIndexes` を付けると、各 `index.md` と同じディレクトリに ID 一覧 `ids.md` を生成し、index.md に ids.md へのリンクを置く。
 `-NoRun` を付けるとテストを実行せず、既存の結果ファイルで判定する。
 
@@ -143,3 +154,27 @@ pytest は関数名に `-` を使えないので `@pytest.mark.parametrize(..., 
 - `source.files`: 本番コードの場所 (スタブ残りの検出に使う)
 - `taskContextBudgetKB`: 1 タスクの読み物 (タスクファイル + 参照すべき設計で指した節・ID の定義行) の上限 KB (既定 40)。
   実装担当がタスクごとに読む量を抑えるため、詳細設計の網羅性ゲートで超えたタスクを TASK-CONTEXT-LARGE にする
+
+## 9. 決定台帳と受け入れ例の照合
+
+ID の網羅 (上の検査) とは別に、「承認した値」がそのまま実装まで届いているかを機械で追う。
+
+- **決定台帳** (`.devflow/decisions/ledger.md`): `| DEC | 論点 | 決定 | 照合 | 区分 | 根拠 | 状態 | 版 | 旧照合 |`。
+  区分は `確定` (ユーザーが答えた) / `仮` (聞かずに決めた) / `処置-C` (実装担当が設計にない細部を決めた) / `処置-B` (外部環境がなくテストダブルで進めた) /
+  `要回答` (お金・権限・個人情報などに当たり、決めずに止めた)。行は `devflow-state.ps1 ledger add` で足し、`override` / `amend` で変える
+- **照合**: その値が docs/ に現れたときに当たる正規表現。DEC-UNCITED・DEC-STALE は docs/ の **全行** (表の行・地の文・タスクファイルのテストケース) を見る
+  (表の行だけを見ると、地の文や todo のタスクに残った旧い値を見逃すため)
+- **受け入れ例**: 要件の Then の `` `値` `` の印 (interview-rules.md §10)。`complete-phase requirements` / `basic-design` と `relock` が `.devflow/examples.lock.json` に凍結する
+- **受け入れテストとの照合** (devflow-lib の `Test-AcceptanceExamples`): `acceptance.files` の中で、`[AT]` と `[REQ-…]` を含む行から次の `[AT]` の行までをそのテストとし、
+  アサーションの **期待値側の引数** と、そこから名前で参照される同じファイルの定数だけを取り出す。テスト名・コメント・Given の行は見ない
+
+  | 書き方 | 期待値側として見るところ |
+  |--------|--------------------------|
+  | `expect(x)[.not].toBe/toEqual/toStrictEqual/toContain/toMatch/…(期待値)` (Jest・Vitest) | matcher の引数 (`.not` なら否定) |
+  | `assert.<fn>(実際, 期待値[, メッセージ])` (node:assert・chai) | 第 2 引数 (引数が 1 つならそれ)。`notStrictEqual`・`doesNotMatch` などは否定 |
+  | `Assert.<Fn>(期待値, 実際)` (xUnit・MSTest)、`Assert.That(実際, 制約)` (NUnit) | 第 1 引数 (That は第 2)。`NotEqual`・`DoesNotContain`・`False` は否定 |
+  | `self.assert<Fn>(a, b)`・`assert<Fn>(a, b)` (unittest・JUnit) | 第 1・第 2 引数。`assertNot…`・`assertFalse` は否定 |
+  | `assert 実際 == 期待値` / `assert 値 in 実際` (pytest) | `==` の右辺 / `in` の左辺。`!=`・`not in` は否定 |
+
+  否定印の値は否定のアサーションに、他は肯定のアサーションにあることを求める。順序の宣言は、1 つのアサーションの中の並び、または各値の最後の出現の順で確かめる。
+  ここにない書き方 (Go の `if got != want`、別ファイルの fixture、文字列のエスケープ表記) は外れとして警告に出る (止めない。人が確かめる)

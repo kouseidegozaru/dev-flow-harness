@@ -1,20 +1,22 @@
 # フェーズ 5: 実装 (完全自動)
 
-`/clear` 後の対話セッションで、そのセッションを **オーケストレーター** として実行する。
-**ユーザーには一切質問しない。** 判断に迷うことは実装担当が blocked として記録し、最終レポートで報告する。
+詳細設計に続けて、同じセッションを **オーケストレーター** として実行する (自動区間の途中から再開したときも同じ)。
+**ユーザーには一切質問しない。** 設計にない判断は実装担当が決定台帳に `処置-C` として記録して続け、外部環境がなくテストダブルで進めたものは `処置-B`、
+お金・権限・個人情報などに当たる判断は `要回答` としてそのタスクだけ blocked にする。どれも全タスク処理後の **最後の 1 回** でまとめて見せる。
 
 ## 役割分担
 
 - **このセッション (オーケストレーター)**: `tdd-implementer` サブエージェントを起動して、実装フェーズを任せるだけ。
   タスクの中身・設計ファイル・ソースコードは読まない。タスクの完了確認もしない (`devflow-state.ps1 task <ID> done` が機械的に確認する)。
   読むのは `impl-status` の出力と、実装担当の短い報告だけ
-- **tdd-implementer サブエージェント (実装担当)**: タスクを依存順に 1 件ずつ TDD で実装・コミットし、次々にこなす。
-  自分のコンテキスト使用率が閾値 (`contextThresholdPercent`、既定 70%) を超えたら、きりの良いところで `.devflow/handoff.md` を書いて終える
-  (使用率はフックが実装担当自身の transcript から測り、実装担当に知らせる。閾値前に終えようとしたら SubagentStop フックが止めて次のタスクへ進ませる)
+- **tdd-implementer サブエージェント (実装担当)**: **1 体で 1 タスク** (`implementer.tasksPerAgent`、既定 1) を TDD で実装・コミットし、done か blocked にして終える。
+  次のタスクは新しい 1 体が行う (前のタスクの読み物を抱えないため。補償タスク・再試行も新しい 1 体)。担当分を処理する前に終えようとしたら SubagentStop フックが止める。
+  1 タスクが 1 体のコンテキストに収まらないとき (使用率が `contextThresholdPercent`、既定 70% を超えた) だけ、`.devflow/handoff.md` を書いて交代する (非常口)
 
 ## 進め方
 
-1. `pwsh -NoProfile -File scripts/devflow-state.ps1 preflight` (テストコマンドが実行できる環境かを確かめる)。
+1. 詳細設計から続けて来たときは、出発前の確認 (`preflight -Departure`) が済んでいるので手順 2 へ。途中から再開したときは
+   `pwsh -NoProfile -File scripts/devflow-state.ps1 preflight` (テストコマンドが実行できる環境かを確かめる)。
    exit 1 なら実装担当を起動せず、出力をそのままユーザーに報告して止まる (環境の不備のまま進めると、全タスクが blocked になるため)
 2. `pwsh -NoProfile -File scripts/devflow-state.ps1 start-phase`
 3. `pwsh -NoProfile -File scripts/devflow-state.ps1 run start`
@@ -30,12 +32,12 @@
    (このセッションの応答が途中で終わり、監視の失効・終了時のフックのたびにターンを使い、実装担当の作業中のファイルを巻き込みやすくなる)。
    依頼文は次の 1 行だけ (タスクの中身を書き足さない):
 
-   > 実装フェーズのタスクを進めよ (次のタスク: <impl-status の nextTask>)。
+   > 実装フェーズのタスクを 1 件進めよ (タスク: <impl-status の nextTask>)。
 
-6. 実装担当の報告 (`STATUS: handoff | no-ready-task` と、done / blocked にしたタスク ID) を受け取ったら、手順 4 に戻る。
-   報告の中身を検証したり、タスクファイルやコードを読んだりしない
+6. 実装担当の報告 (`STATUS: done | blocked | handoff | no-ready-task` と、タスク ID) を受け取ったら、手順 4 に戻る。
+   報告の中身を検証したり、タスクファイルやコードを読んだりしない。ユーザーが途中で仕様の変更を言っていたら、ここで SKILL.md の「6. 承認の後の気変わり」を行ってから手順 4 に戻る
 
-同じ状態 (impl-status の done 件数が増えない) のまま実装担当が 2 回続けて終わった場合は、それ以上起動せず、
+同じ状態 (impl-status の done と blocked の件数の合計が増えない) のまま実装担当が 2 回続けて終わった場合は、それ以上起動せず、
 `devflow-state.ps1 run stop` を実行してユーザーに状況 (impl-status と .devflow/handoff.md の要点) を報告して止まる。
 **「作業は進んでいる」「残りが少ない」などの自分の判断で、この規則を飛ばさない。** 1 タスクが 1 体の実装担当で終わらないのは、
 タスクが大きすぎるか、読み物が大きすぎる (詳細設計の直し方の問題) ことが多く、続けても費用が増えるだけになりやすい。
@@ -47,6 +49,12 @@
   `devflow-commit.ps1 -Kind docs` でコミットしてから次の実装担当を起動する
 - 「Stop hook feedback: ... uncommitted changes」(クラウドの終了時のチェック) が出ても、実装担当の作業中ならコミットしない。
   前面で起動していれば、実装担当の作業中にこのセッションの応答が終わることはない
+
+## 自動区間の途中でユーザーが仕様の変更を言ったとき
+
+実装担当の作業中にユーザーの発言が届いたら、実装担当の報告を待ってから、SKILL.md の「6. 承認の後の気変わり」に従う
+(確認の 1 問だけを聞き、値なら `override`、形なら `amend`。**最初からやり直さない・黙って実装だけ足さない**)。
+反映で足したタスク (補償タスク `TASK-C-…`、amend のタスク) は、手順 4 からの通常の流れで 1 タスク 1 体の実装担当が進める。
 
 ## 全タスク処理後
 
@@ -64,7 +72,7 @@
 | preflight が NG | 出力 | テストのツールを入れる、または `.devflow/config.json` の `test.command` / `test.resultGlobs` を直す |
 | no-tasks | `docs/04-detailed-design/tasks/index.md` | ID と状態の列を持つ表に直す (`devflow-trace -Mode design` が exit 0 になること) |
 | 進捗がないまま実装担当が終わり続けた | `impl-status`、`.devflow/handoff.md`、`.devflow/logs/` のテストのログ | テストの環境 (DB・外部サービス・ポート) を用意する。設計が原因なら `/dev-flow redo detailed-design` |
-| 残りが blocked だけ (検証まで進んで最終レポートに載る) | `.devflow/blocked.md` の理由と「必要な判断」 | 判断して設計を直し、`devflow-state.ps1 task <ID> todo` で戻す。途中の作業を生かすなら、blocked.md の `git revert <取り消しコミット>` で先に復元する |
+| 残りが blocked だけ (検証まで進み、最後の 1 回で聞かれる) | `.devflow/blocked.md` の理由、`.devflow/debrief.md` | 最後の 1 回で答えれば、オーケストレーターが override / amend で反映して該当タスクだけ回し直す。手で直すなら設計を直し、`devflow-state.ps1 task <ID> todo` で戻す。途中の作業を生かすなら、blocked.md の `git revert <取り消しコミット>` で先に復元する |
 
 ## 実装担当に守らせていること (参考)
 
@@ -77,7 +85,11 @@
 - タスクごとに読むのは `devflow-state.ps1 task-context <ID>` が書き出す `.devflow/context/<ID>.md` (タスクファイル + 参照した設計の節 + 依存タスクの実装メモ) だけ。
   done の前に、後続のタスク向けの実装メモ `.devflow/notes/<ID>.md` を書く (`task <ID> done` が有無を確かめる)。`handoff.md` は引き継ぐときだけ、全体を書き直す
 - 前提のタスクが依存に入っていなかったときは、blocked にせず `devflow-state.ps1 add-dep <ID> <作るタスク>` で依存を足して後回しにする (人の判断を待たない)
-- 同じテストで `maxAttemptsPerTest` 回失敗した、設計どおりでは実装できない、設計にない判断が必要、のいずれかなら blocked にして次のタスクへ
+- 設計にない細部の判断は、決めて台帳に `処置-C` を足して続ける (`devflow-state.ps1 ledger add -Kind C -Task <ID> …`)。お金・権限・個人情報などの語に当たると
+  `要回答` に格上げされ (exit 4)、そのタスクを blocked にする。外部環境がなくテストダブルで進めたら `処置-B`
+- 受け入れテストのタスク (`TASK-AT-*`) は `devflow-commit.ps1 -Kind acceptance` でコミットする (全テスト成功を求める。Red は求めない)。
+  受け入れ例の値が期待値側にないと警告が 1 回出る (拒否はしない。最終レポートで人が確認する)
+- 同じテストで `maxAttemptsPerTest` 回失敗した、設計どおりでは実装できない、のいずれかなら blocked にして終える (次のタスクは新しい 1 体が行う)
 
 ## ユーザーの権限設定について
 

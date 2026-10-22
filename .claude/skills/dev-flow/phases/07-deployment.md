@@ -36,7 +36,7 @@
    |------------|------|----|
    | 0 | 実行できる | 手順 4 |
    | 3 | デプロイ先が設定されていない | `architecture.md` の「デプロイ」節が「なし」なら、判定「デプロイなし」でレポートを書いて手順 5 へ。デプロイ先が書かれているなら詳細設計の漏れなので、判定「未実施 (設定なし)」で手順 5 へ |
-   | 4 | 検証の結果が前提を満たさない (判定が「漏れなし」でない、blocked のタスクがある) | デプロイしない。判定「未実施 (検証の結果)」で手順 5 へ |
+   | 4 | 検証の結果・決定台帳が前提を満たさない (判定が「漏れなし」でない、blocked のタスクがある。本番のデプロイ先では、台帳に open の繰延べ・要回答がある) | デプロイしない。判定「未実施 (検証の結果)」で手順 5 へ |
    | 1 | 実行できない (コマンドがない、秘密の値がない、コードに未コミットの変更がある) | デプロイしない。判定「未実施 (環境)」で、出力の理由をレポートに書いて手順 5 へ。秘密の値がないときは、どの値を vault のどこに入れればよいかを書く |
 
    コードに未コミットの変更がある、と出た場合も、自分でコミットしない (検証していない変更をデプロイしないため)。
@@ -83,6 +83,8 @@
    pwsh -NoProfile -File scripts/devflow-state.ps1 run stop
    ```
 
+   クラウドのセッションでは、続けて `git push` し、このブランチの PR を 1 つだけ作る (draft。本文は日本語で、検証レポートとデプロイレポートの要点と、
+   最後の 1 回の答えを書く。既にあれば本文を更新する)。
    phase が `done` になる。ユーザーに、検証レポートの要点 (漏れ・blocked・人が確認する項目) とデプロイの結果 (判定・公開先・切り戻し・人がすること) を伝えて終える。
 
 ## 完了条件
@@ -96,7 +98,7 @@
 | 判定 | 見るもの | 直し方 |
 |------|----------|--------|
 | 未実施 (設定なし) | `architecture.md` の「デプロイ」節 | `.devflow/config.json` に `deploy.targets` を書き、`/dev-flow redo deployment` |
-| 未実施 (検証の結果) | `docs/verification-report.md` | 漏れ・blocked を解消して検証を通し直す。そのままデプロイしてよいなら `deploy.allowWithIssues` を true にして `/dev-flow redo deployment` |
+| 未実施 (検証の結果) | `docs/verification-report.md`、`.devflow/decisions/ledger.md` | 漏れ・blocked を解消して検証を通し直す。台帳の open の繰延べ・要回答は、最後の 1 回で答えて解決にする (本番のデプロイ先は `deploy.allowWithIssues` では飛ばせない)。本番でないデプロイ先だけなら、`deploy.allowWithIssues` を true にして `/dev-flow redo deployment` でもよい |
 | 未実施 (環境) | レポートの理由 | 環境変数・ツールを用意して `/dev-flow redo deployment` |
 | 失敗 | `.devflow/deploy-log.md`、`.devflow/logs/deploy-*.log` | 原因を直して `/dev-flow redo deployment` (成功済みのデプロイ先は、コードが同じなら飛ばされる)。手で戻すなら `devflow-deploy.ps1 rollback <name>` |
 

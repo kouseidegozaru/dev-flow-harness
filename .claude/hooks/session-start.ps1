@@ -2,7 +2,7 @@
 #
 # - source=clear   : 前フェーズ完了後の /clear。次フェーズの開始指示を注入する
 #                    (実装・検証・デプロイフェーズは、このセッションをオーケストレーターとして開始させる)
-# - source=startup : 進行中フェーズを知らせる。実装・検証・デプロイフェーズが未開始なら (詳細設計の後に起動し直した)、clear と同じく開始させる。
+# - source=startup : 進行中フェーズを知らせる。自動区間 (詳細設計・実装・検証・デプロイ) が未開始なら (基本設計の後に起動し直した)、clear と同じく開始させる。
 #                    クラウドのセッション (CLAUDE_CODE_REMOTE=true) は、新しいセッションを始めることが /clear の代わりになるため、
 #                    対話フェーズも未開始なら clear と同じく開始させる
 # - source=compact : 手順書と決定ツリー (実装・検証なら状態と引き継ぎ、デプロイなら記録) の再読を指示する
@@ -20,10 +20,15 @@ $source = if ($in -and $in.PSObject.Properties['source']) { [string]$in.source }
 $phase = [string]$state.phase
 $label = Get-PhaseLabel $phase
 $phaseFile = Get-PhaseFile $phase
-$interactivePhases = @('vision', 'requirements', 'basic-design', 'detailed-design')
-$autoPhases = @('implementation', 'verification', 'deployment')
+# 対話は 01〜03 だけ。基本設計の承認が自動区間 (詳細設計 → 実装 → 検証 → デプロイ) の入口
+$interactivePhases = @('vision', 'requirements', 'basic-design')
+$autoPhases = @('detailed-design', 'implementation', 'verification', 'deployment')
 # 自動フェーズで、オーケストレーターの下で作業をするもの
-$worker = if ($phase -eq 'deployment') { 'デプロイは scripts/devflow-deploy.ps1 が行う' } else { '実装そのものは tdd-implementer サブエージェントが行う' }
+$worker = switch ($phase) {
+    'deployment' { 'デプロイは scripts/devflow-deploy.ps1 が行う' }
+    'detailed-design' { '詳細設計は detailed-designer サブエージェントが行い、続けて実装・検証・デプロイまで進める' }
+    default { '実装そのものは tdd-implementer サブエージェントが 1 タスク 1 体で行う' }
+}
 
 function Out-Context([string]$Text) {
     Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $Text } }
@@ -69,7 +74,7 @@ switch ($source) {
             Out-Context "[dev-flow] 開発フローが進行中 (現在フェーズ: $label, $started)。ユーザーが続きを望んだら .claude/skills/dev-flow/SKILL.md に従って再開する。"
         }
         if ($autoPhases -contains $phase -and -not $state.phaseStarted) {
-            # 詳細設計の終わりに「権限モードを変えて起動し直し、一言送る」と案内している。/clear のときと同じく開始させる
+            # 基本設計の終わりに「権限モードを変えて起動し直し、一言送る」と案内している。/clear のときと同じく開始させる
             Out-Context @"
 [dev-flow 自動再開]
 前フェーズが完了し、Claude Code が起動し直された。現在フェーズ: $phase ($label)。このフェーズはユーザーに質問せず最後まで自動で進める。
@@ -100,7 +105,8 @@ switch ($source) {
             Out-Context @"
 [dev-flow] コンテキストが圧縮された。圧縮前の会話の記憶に頼らず、次を読み直してからオーケストレーターの作業を続けること:
 1. .claude/skills/dev-flow/phases/$phaseFile (手順書)
-2. ``pwsh -NoProfile -File scripts/devflow-state.ps1 impl-status`` の出力と .devflow/handoff.md
+2. ``pwsh -NoProfile -File scripts/devflow-state.ps1 impl-status`` の出力 (詳細設計なら .devflow/decisions/detailed-design.md のレビュー状況)
+3. .devflow/debrief.md があれば、その状態 (最後の 1 回の質問前か回答済みか)
 "@
         }
     }
