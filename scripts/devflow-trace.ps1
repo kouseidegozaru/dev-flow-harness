@@ -185,7 +185,13 @@ if ($Mode -eq 'design') {
         foreach ($e in @($t.fileEntries | Where-Object { -not $_.New })) {
             $cs = @($creators[$e.Path] | Where-Object { $_ -and $_ -ne $t.id })
             if ($cs.Count -gt 0 -and @($cs | Where-Object { $anc.ContainsKey($_) }).Count -eq 0) {
-                Add-Issue 'TASK-DEP-MISSING' $t.id "$($e.Path) は $($cs -join ', ') が新規に作るが、依存 (祖先) にない" $t.file
+                # 作るタスクがこのタスクの後続 (子孫) なら、依存を足すと循環する。このタスクの作成・変更するファイルから外すよう案内する
+                $desc = @($cs | Where-Object { (Get-Ancestors $_).ContainsKey($t.id) })
+                if ($desc.Count -eq $cs.Count) {
+                    Add-Issue 'TASK-DEP-MISSING' $t.id "$($e.Path) は後続の $($cs -join ', ') が新規に作る。このタスクでは触らないなら「作成・変更するファイル」から外す (説明として書くなら括弧の中に書く)" $t.file
+                } else {
+                    Add-Issue 'TASK-DEP-MISSING' $t.id "$($e.Path) は $($cs -join ', ') が新規に作るが、依存 (祖先) にない" $t.file
+                }
             }
         }
     }
@@ -196,6 +202,8 @@ if ($Mode -eq 'design') {
         foreach ($rid in $t.refIds) {
             if (-not $defs.Contains($rid) -or $t.assigned -contains $rid) { continue }
             $owners = @($defs[$rid].tasks | Where-Object { $_ -ne $t.id } | Select-Object -Unique)
+            # 後続 (子孫) のタスクだけが実装する ID は、後の仕様を参考に読んでいるだけなので数えない (依存を足すと循環する)
+            if (@($owners | Where-Object { -not (Get-Ancestors $_).ContainsKey($t.id) }).Count -eq 0) { continue }
             if ($owners.Count -gt 0 -and @($owners | Where-Object { $anc.ContainsKey($_) }).Count -eq 0) {
                 Add-Issue 'TASK-DEP-SUSPECT' $t.id "参照する $rid は $($owners -join ', ') が実装するが、依存 (祖先) にない" $t.file
             }
@@ -339,6 +347,7 @@ $reviewLines = @{}
 $reviewLogPath = Join-DevflowPath $root '.devflow/review-log.md'
 if (Test-Path -LiteralPath $reviewLogPath) {
     foreach ($l in (Read-Utf8 $reviewLogPath) -split "`r?`n") {
+        if ($l -match '^\s*-\s*\[判断\]') { continue }   # 設計にない判断の記録 (review の確認ではない)
         foreach ($m in [regex]::Matches($l, '\[([^\]]+)\]')) {
             $rid = $m.Groups[1].Value
             if (-not $reviewLines.ContainsKey($rid)) { $reviewLines[$rid] = $l.Trim().TrimStart('-').Trim() }
@@ -433,15 +442,21 @@ if ($UpdateIndexes) {
 # 6. 出力
 # ---------------------------------------------------------------------------
 $warnings = [System.Collections.Generic.List[object]]::new()
+$deferred = @()
 if ($Mode -eq 'docs') {
-    # 後続フェーズで解消する種別は警告に回す
-    $later = @('REQ-NOT-COVERED', 'NOT-ASSIGNED')
-    $keep = @($issues | Where-Object { $_.code -notin $later -and $_.code -notlike 'TASK-*' })
-    foreach ($i in @($issues | Where-Object { $keep -notcontains $_ })) { $warnings.Add($i) }
+    # 後続フェーズで割り当てるもの (タスクへの割り当て、基本設計がまだないときの要件の被覆) は、警告にもせず件数だけを出す
+    # (要件定義の時点で数百件の「警告」が出て、本当の警告が埋もれていたため)。基本設計があれば、要件の被覆は警告にする
+    $hasBasic = @($docFiles | Where-Object { $_ -like 'docs/03-basic-design/*' }).Count -gt 0
+    $deferred = @($issues | Where-Object { $_.code -eq 'NOT-ASSIGNED' -or ($_.code -eq 'REQ-NOT-COVERED' -and -not $hasBasic) })
+    $keep = @($issues | Where-Object { $deferred -notcontains $_ -and $_.code -notin @('REQ-NOT-COVERED') -and $_.code -notlike 'TASK-*' })
+    foreach ($i in @($issues | Where-Object { $keep -notcontains $_ -and $deferred -notcontains $_ })) { $warnings.Add($i) }
     $issues.Clear(); foreach ($i in $keep) { $issues.Add($i) }
 }
-# 常に警告に回す種別 (人が見て判断するもの)
-$soft = @($issues | Where-Object { $_.code -in @('DESIGN-NO-ELEMENT', 'TASK-DEP-SUSPECT') })
+# 常に警告に回す種別 (人が見て判断するもの)。
+# 実装の前に止めるための検査 (依存の漏れ・参照先・読み物の大きさ) は、done のタスクでは意味がないので警告に回す
+# (以前の版で書いたタスクに新しい検査がかかり、検証フェーズの -Mode design が毎回止まっていたため)
+$preImpl = @('TASK-DEP-MISSING', 'TASK-REF-NOT-FOUND', 'TASK-CONTEXT-LARGE')
+$soft = @($issues | Where-Object { $_.code -in @('DESIGN-NO-ELEMENT', 'TASK-DEP-SUSPECT') -or ($_.code -in $preImpl -and $tasks.Contains($_.id) -and $tasks[$_.id].status -eq 'done') })
 if ($soft.Count -gt 0) {
     foreach ($i in $soft) { $warnings.Add($i); [void]$issues.Remove($i) }
 }
@@ -550,6 +565,9 @@ if ($Mode -ne 'task' -and -not $NoReport -and (Test-Path -LiteralPath $docsRoot)
 }
 
 # コンソール出力 (エージェントが読む)
+if ($Mode -eq 'docs' -and $deferred.Count -gt 0) {
+    Write-Output "後続フェーズで割り当てる ID: $($deferred.Count) 件 (問題ではない。詳細設計の -Mode design で検査する)"
+}
 if ($warnings.Count -gt 0) {
     Write-Output "警告 (終了コードには含めない。後続フェーズで解消するか、人が見て判断する): $($warnings.Count) 件"
     foreach ($g in ($warnings | Group-Object code | Sort-Object Name)) {

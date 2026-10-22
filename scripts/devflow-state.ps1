@@ -9,7 +9,8 @@
   pwsh -NoProfile -File scripts/devflow-state.ps1 next-task
   pwsh -NoProfile -File scripts/devflow-state.ps1 task TASK-003 done        # 完了の条件を確かめてから done にする
   pwsh -NoProfile -File scripts/devflow-state.ps1 task TASK-003 blocked -Reason "..."
-  pwsh -NoProfile -File scripts/devflow-state.ps1 task-context TASK-003         # タスクの読み物 (タスクファイル + 参照した設計の節 + 依存タスクの実装メモ)
+  pwsh -NoProfile -File scripts/devflow-state.ps1 task-context TASK-003         # タスクの読み物を .devflow/context/TASK-003.md に書き出す (all で全タスク)
+  pwsh -NoProfile -File scripts/devflow-state.ps1 check-branches               # ほかのブランチで dev-flow が進んでいないかを確かめる (exit 5 なら進んでいる)
   pwsh -NoProfile -File scripts/devflow-state.ps1 add-dep TASK-033 TASK-039 -Reason "..."   # 依存の漏れを直して後回しにする
   pwsh -NoProfile -File scripts/devflow-state.ps1 run start                # オーケストレーターの開始 (Stop フックが作業の途中で止まらないようにする)
 #>
@@ -216,15 +217,24 @@ switch ($Command) {
         Write-Output "$Arg1 → $Arg2"
     }
     'task-context' {
-        # task-context <TASK-ID>: 実装担当・レビュー担当がそのタスクで読むもの (タスクファイル + 参照すべき設計で指した節・ID の定義行
-        # + 依存タスクの実装メモ) を 1 つにまとめて出力する。設計ファイルを探し回って読む量を抑えるため
-        if (-not $Arg1) { throw 'task-context <TASK-ID> の形式で指定してください' }
-        $ctx = Get-TaskContext $root $config $Arg1 -WithNotes
-        Write-Output $ctx.Text
-        if ($ctx.Missing.Count -gt 0) {
-            Write-Output '<!-- 見つからなかった参照 (必要なら index.md から探して読む) -->'
-            $ctx.Missing | ForEach-Object { Write-Output "<!-- - $_ -->" }
+        # task-context <TASK-ID> | all: 実装担当・レビュー担当がそのタスクで読むもの (タスクファイル + 参照すべき設計で指した節・ID の定義行
+        # + 依存タスクの実装メモ) を 1 つにまとめ、.devflow/context/<TASK-ID>.md に書き出す。設計ファイルを探し回って読む量を抑えるため。
+        # 標準出力には書き出し先と大きさだけを出す (Bash の出力の上限で読み物の後半が切れるのを避け、Read で読ませるため)。
+        # all: tasks/index.md の全タスク分を書き出す (詳細設計のレビュー担当に Bash を持たせずに済むよう、レビューの前に実行する)
+        if (-not $Arg1) { throw 'task-context <TASK-ID> | all の形式で指定してください' }
+        $ids = if ($Arg1 -eq 'all') { @(Read-TaskIndex $root $config | ForEach-Object { $_.Id }) } else { @($Arg1) }
+        foreach ($tid in $ids) {
+            $ctx = Get-TaskContext $root $config $tid -WithNotes
+            $text = $ctx.Text
+            if ($ctx.Missing.Count -gt 0) {
+                $text += "<!-- 見つからなかった参照 (必要なら index.md から探して読む) -->`n" + (($ctx.Missing | ForEach-Object { "<!-- - $_ -->" }) -join "`n") + "`n"
+            }
+            $rel = ".devflow/context/$tid.md"
+            Write-Utf8 (Join-DevflowPath $root $rel) $text
+            $kb = [math]::Round([System.Text.Encoding]::UTF8.GetByteCount($text) / 1024, 1)
+            Write-Output "$rel ($kb KB$(if ($ctx.Missing.Count -gt 0) { "、見つからなかった参照 $($ctx.Missing.Count) 件" }))"
         }
+        if ($Arg1 -ne 'all') { Write-Output 'このファイルを Read で読むこと (大きいときは offset / limit で分けて全部読む)' }
     }
     'add-dep' {
         # add-dep <TASK-ID> <DEP-ID> -Reason ...: 実装中に依存の漏れ (前提の成果物を作るタスクが依存にない) を見つけたとき、
@@ -238,6 +248,7 @@ switch ($Command) {
         if (-not $d) { throw "tasks/index.md に $Arg2 がありません" }
         if ($t.Status -eq 'done') { throw "$Arg1 は done です" }
         if ($d.Status -eq 'done') { Write-Output "$Arg2 は done なので、依存を足す必要はありません (前提の成果物が無い原因は別にある)"; exit 1 }
+        if ($d.Status -eq 'blocked') { Write-Output "$Arg2 は blocked です。足しても再開されないため、$Arg1 も blocked にすること (理由に「$Arg2 (blocked) の成果物が必要」と書く)"; exit 1 }
         if (Test-TaskDependsOn $tasks $Arg2 $Arg1) { Write-Output "$Arg2 は $Arg1 に (間接に) 依存しているため、足すと循環します。blocked にすること"; exit 1 }
         $dirty = @(Get-UncommittedChanges $root $config)
         if ($dirty.Count -gt 0) {
@@ -263,6 +274,43 @@ switch ($Command) {
         Write-Utf8 $p $text
         Write-Output $undoNote
         Write-Output "$Arg1 の依存に $Arg2 を足し、todo に戻しました ($Arg2 の完了後に next-task が返す)"
+    }
+    'check-branches' {
+        # ほかのブランチ (リモート) で dev-flow が並行して進んでいないかを確かめる。
+        # クラウドのセッションは 1 セッション 1 ブランチで動き、state.json はブランチごとにあるため、別のセッションで
+        # 同じフェーズを始めると、同じ作業を 2 か所で進めてしまう (互いの進捗も見えない)。
+        # 次の条件をすべて満たすブランチを報告して exit 5: 今のブランチに取り込まれていないコミットがある /
+        # .devflow/state.json がある / .devflow・docs が今のブランチと違う / .devflow の最後の変更が concurrentRunHours 以内
+        $hours = [double]$config.concurrentRunHours
+        & git -C $root fetch -q --prune origin 2>$null
+        $fetched = ($LASTEXITCODE -eq 0)
+        $cur = (& git -C $root rev-parse --abbrev-ref HEAD 2>$null)
+        $refs = @(& git -C $root for-each-ref --format='%(refname:short)' refs/remotes 2>$null | Where-Object { $_ -and $_ -notmatch '/HEAD$' -and $_ -notmatch '^[^/]+$' })
+        $found = @()
+        foreach ($r in $refs) {
+            if ($r -eq "origin/$cur") { continue }
+            & git -C $root merge-base --is-ancestor $r HEAD 2>$null
+            if ($LASTEXITCODE -eq 0) { continue }   # 取り込み済み
+            $st = (& git -C $root show "${r}:.devflow/state.json" 2>$null) -join "`n"
+            if (-not $st) { continue }
+            & git -C $root diff --quiet HEAD $r -- .devflow docs 2>$null
+            if ($LASTEXITCODE -eq 0) { continue }   # dev-flow の成果物は同じ (squash で取り込み済みなど)
+            $ct = [string](& git -C $root log -1 --format=%ct $r -- .devflow 2>$null)
+            if (-not $ct) { continue }
+            $age = ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() - [long]$ct) / 3600
+            if ($hours -gt 0 -and $age -gt $hours) { continue }
+            try { $o = $st | ConvertFrom-Json } catch { continue }
+            $done = ''
+            $ix = (& git -C $root show "${r}:docs/04-detailed-design/tasks/index.md" 2>$null) -join "`n"
+            if ($ix) { $done = "、done のタスク $(([regex]::Matches($ix, '\|\s*done\s*\|')).Count) 件" }
+            $found += "- $r (phase: $($o.phase)$done、.devflow の最終更新: $([math]::Round($age, 1)) 時間前)"
+        }
+        if (-not $fetched) { Write-Output '注意: git fetch に失敗したため、手元にあるリモートの情報だけで確かめた' }
+        if ($found.Count -eq 0) { Write-Output 'OK (ほかのブランチで進んでいる dev-flow はない)'; exit 0 }
+        Write-Output "ほかのブランチで dev-flow が進んでいます (今のブランチ: $cur、現在フェーズ: $((Read-DevflowState $root).phase)):"
+        $found | ForEach-Object { Write-Output $_ }
+        Write-Output 'そのブランチのセッションがまだ動いているなら、こちらでは始めない。続きをこちらで進めるなら、そのブランチを取り込んでから (git merge <ブランチ>) 始める'
+        exit 5
     }
     'run' {
         # run start: このセッションを実装・検証フェーズのオーケストレーターとして登録する (Stop フックが途中で止まらないようにする)
@@ -322,6 +370,6 @@ switch ($Command) {
         Write-Output "OK (test.command: $($config.test.command))"
     }
     default {
-        throw "未知のコマンド: $Command (init|show|phase|start-phase|complete-phase|set-phase|impl-status|next-task|task|task-context|add-dep|run|verification-round|add-verification-task|config|preflight)"
+        throw "未知のコマンド: $Command (init|show|phase|start-phase|complete-phase|set-phase|impl-status|next-task|task|task-context|add-dep|check-branches|run|verification-round|add-verification-task|config|preflight)"
     }
 }

@@ -10,6 +10,7 @@ model: inherit
 ## 始め方
 
 1. `.devflow/handoff.md` を読む。前の実装担当が途中で終えたタスクがあれば、その記述 (どのコミットまで進んだか、残っているテストケース) から再開する
+   (ただし、そのタスクが `next-task` で返らない (done など) なら、その記述は古いので無視する)
 2. `docs/04-detailed-design/conventions.md` を読む (この実装担当で 1 回だけ)
 3. `pwsh -NoProfile -File scripts/devflow-state.ps1 config` で `maxAttemptsPerTest` (同じテストで失敗を続けてよい回数) を確かめる
 
@@ -22,13 +23,14 @@ model: inherit
    - 出力が `NONE (...)` (exit 3) なら、実行できるタスクは残っていない。「報告の形式」で報告して終える
    - 作業中 (in_progress) のタスクがあればそれが返る
 2. `devflow-state.ps1 task <TASK-ID> in_progress`
-3. そのタスクの読み物を 1 回で読む:
+3. そのタスクの読み物を書き出して読む:
 
    ```bash
    pwsh -NoProfile -File scripts/devflow-state.ps1 task-context <TASK-ID>
    ```
 
-   出力は、タスクファイル + 「参照すべき設計」で指した節と ID の定義行 + 依存タスクの実装メモ (`.devflow/notes/<依存の ID>.md`)。
+   `.devflow/context/<TASK-ID>.md` に書き出されるので、それを Read で **全部** 読む (大きければ offset / limit で分けて読む。
+   Bash の cat などで読むと、出力の上限で後半が切れる)。中身は、タスクファイル + 「参照すべき設計」で指した節と ID の定義行 + 依存タスクの実装メモ (`.devflow/notes/<依存の ID>.md`)。
    **設計はこれだけで実装できるように作られている。** 設計ファイルを別に開かない。足りないときだけ、出力の末尾の「見つからなかった参照」や
    タスクファイルの参照先から、その節だけを読む (上流ドキュメントは `docs/<層>/index.md` から該当ファイルだけ)。
    既存のコードは、作成・変更するファイルと、実装メモに書かれた使うもの (公開の名前・ファイル) だけを読む。
@@ -71,7 +73,7 @@ model: inherit
    pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind refactor -Scope <TASK-ID> -Message "<何を整理したか>"
    ```
 
-コミットは必ず `devflow-commit.ps1` で行う (`git commit` を直接使わない)。
+コミットは必ず `devflow-commit.ps1` で行う (`git commit` を直接使わない)。`-Message` の文はシングルクォートで囲む (括弧を含むと、ダブルクォートでは bash が構文エラーにすることがある)。
 
 非機能要件 (NFR) の ID のテストは、テストケースに書かれた測定条件 (データ量・環境) を再現して測る。
 条件より小さいデータで通すだけのテストにしない。条件を再現できなければ blocked にする。
@@ -84,7 +86,11 @@ model: inherit
 pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode task -Task <TASK-ID>
 ```
 
-さらに、タスクファイルの「完了条件」を 1 項目ずつ確認する。担当 ID のうち検証方法が `review` のものは、テストでは確かめられないので、
+さらに、タスクファイルの「完了条件」を 1 項目ずつ確認する。
+設計に書かれていない細部を自分で決めた (blocked にするほどではない) ときは、`.devflow/review-log.md` に 1 行ずつ追記する
+(形式: `- [判断] <TASK-ID> <モジュールや画面の ID>: <決めたこと> (<該当ファイル:行>)`)。検証レポートで人が確かめる一覧になる。
+利用者から見える振る舞い (表示・文言・エラー・お金・権限) に関わるものは、行末に `(利用者から見える)` と書く。
+設計の意図と食い違う、または複数の案のどれを選ぶかで利用者の操作結果が大きく変わるものは、決めずに blocked にする (「行き詰まったとき」)。担当 ID のうち検証方法が `review` のものは、テストでは確かめられないので、
 自分のコード (と必要なら README などの成果物) を読み返して設計どおりかを確かめ、`.devflow/review-log.md` に ID ごとに 1 行追記する
 (ファイルがなければ作る。形式: `- [<ID>] <TASK-ID>: <確かめたこと> (<該当ファイル:行>)`)。
 `task <ID> done` は、担当の review の ID の記録がないと拒否する (trace の REVIEW-NOT-RECORDED)。
@@ -95,7 +101,10 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode task -Task <TASK-ID>
 - テストの削除・スキップ (`Skip`、`.skip`、`@Ignore` など)・期待値を実装に合わせて書き換えること
 - 設計にない仕様で代替すること、設計を勝手に変更すること。`docs/` 配下を編集しないこと (状態欄と依存は devflow-state.ps1 の task・add-dep が更新する)
 - TODO・FIXME・スタブ・未実装例外 (`NotImplementedException` など) を残すこと
-- 担当外のタスクの実装を先取りすること (依存先の不足を見つけたら blocked にする)
+- 担当外のタスクの実装を先取りすること (依存先の不足は「前提のタスクがまだないとき」に従う)
+- テストの期待結果を、実行した日の実際の日付・時刻に依存させること。現在時刻は注入できるようにして、テストでは固定の時刻を渡す
+  (固定の日付を「未来」として書いたテストは、その日が過ぎると落ちる。実際にそれで CI が落ちたことがある)
+- 実装を先に書いてからテストを書くこと (Red を確かめずに Green にしない。`test` コミットの前に `feat` の中身を書かない)
 - テストが落ちている状態で feat / refactor コミットをすること
 - `devflow-state.ps1 task <ID> done -Force` を使うこと (完了の確認を飛ばすのは人だけ)
 

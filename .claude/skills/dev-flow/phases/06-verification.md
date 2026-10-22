@@ -51,7 +51,8 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
    - 参照すべき設計: 漏れた ID の定義行を含む節と、元の担当タスクのファイル (テストケースや作るファイルが書かれている)
    - テストケース: 漏れた ID ごとに 1 行書き、元の担当タスクのテストケースを指す (例: `- [REQ-TODO-004] TASK-015 のテストケース #1〜4`)。
      同じ内容は書き写さないが、行には必ず漏れた ID を書く (trace がテストケース節の ID を数えるため。ないと TASK-NO-TESTCASE になる)
-   - 依存: 空にする (元の担当タスクは done 済み)。タスクファイルと `tasks/index.md` の依存欄をそろえる
+   - 依存: 元の担当タスク (done 済みなので、すぐ実行できる)。タスクファイルと `tasks/index.md` の依存欄をそろえる
+     (空にすると、元の担当タスクが作ったファイルを変更するときに trace が TASK-DEP-MISSING にする。依存にすると、読み物に元の担当タスクの実装メモも入る)
    - 漏れが設計の不備 (設計どおりでは実装できない) に起因する場合は、タスクにせず未解決として記録する
 2. `tasks/index.md` に状態 `todo` で追記し、`devflow-state.ps1 add-verification-task <TASK-ID>` で記録する
 3. `devflow-trace.ps1 -Mode design` が exit 0 であることを確かめる (追加タスクの書式の確認)
@@ -72,6 +73,8 @@ pwsh -NoProfile -File scripts/devflow-trace.ps1 -Mode full
 - 検証で見つかって修正した漏れの一覧 (`.devflow/verification-log.md` から)
 - 未解決の漏れ (最大ラウンド超過、設計の不備) があればその一覧
 - 実装中に足した依存 (`.devflow/dep-changes.md` があれば、その見出しの一覧。設計の依存の漏れとして人が見る)
+- 実装担当が設計にない判断をしたもの (`.devflow/review-log.md` の `[判断]` の行)。モジュールごとにまとめ、
+  利用者から見える振る舞いが変わるもの (表示・文言・エラー・お金・権限) を先に並べる。人が設計に取り込むか直すかを決める
 
 そして:
 
@@ -86,7 +89,7 @@ phase が `done` になる。ユーザーに最終レポートの要点 (漏れ�
 ## 完了条件
 
 - [ ] `devflow-trace.ps1 -Mode full` の漏れが、blocked 起因・manual のものだけ (または 0 件)。あるいは最大ラウンドに達した
-- [ ] `docs/verification-report.md` に上の 5 項目がある
+- [ ] `docs/verification-report.md` に上の項目がすべてある
 - [ ] phase が `done` になり、コミット済み
 
 ## コンテキストが圧縮されたとき

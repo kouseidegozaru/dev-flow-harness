@@ -17,6 +17,17 @@
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "startup|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": ["${CLAUDE_PROJECT_DIR}/.claude/hooks/ensure-pwsh.sh"],
+            "timeout": 300
+          }
+        ]
       }
     ],
     "PostToolUse": [

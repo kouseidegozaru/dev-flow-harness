@@ -88,9 +88,11 @@ function Get-DefaultConfig {
         minSessionWorkTokens    = 40000
         hardLimitPercent        = 85
         maxVerificationRounds   = 3
+        # check-branches: ほかのブランチの dev-flow を「並行して進んでいる」とみなす、.devflow の最終更新からの時間 (0 で無制限)
+        concurrentRunHours      = 72
         maxAttemptsPerTest      = 3
         # 1 タスクの読み物 (タスクファイル + 参照すべき設計で指した節) の上限 (KB)。超えたタスクは詳細設計で分けるか参照を絞る
-        taskContextBudgetKB     = 60
+        taskContextBudgetKB     = 40
         idPrefixes              = @('REQ', 'NFR', 'ARC', 'SCR', 'TRN', 'API', 'ERR', 'EXT', 'DM',
                                     'MOD', 'IF', 'VAL', 'EC', 'DBC', 'BR', 'TASK')
         test                    = [ordered]@{
@@ -459,25 +461,58 @@ function Get-MdHeadingSections([string]$Path, [string]$Heading) {
 function Test-PathLikeToken([string]$Token) {
     # バッククォートの中身がファイルのパスとして書かれているか。
     # 説明文中のシグネチャ (`migrate(url, dir = "x/y")`)・ディレクトリ (`src/server/data`、末尾が /)・glob はファイルとみなさない
-    # コード中の名前 (`router.refresh()`・`error.fieldErrors`) や URL のパス (`/a/b.json`) もファイルとみなさない
+    # コード中の名前 (`router.refresh()`・`error.fieldErrors`・`app.merging`) や URL のパス (`/a/b.json`) もファイルとみなさない
     if ($Token -notmatch '^[\w@.+\-\[\]()/]+$' -or $Token.StartsWith('/') -or $Token.EndsWith('/')) { return $false }
     $leaf = ($Token -split '/')[-1]
     if ($leaf -in @('Dockerfile', 'Makefile', 'Procfile', 'Gemfile', 'Rakefile', 'Jenkinsfile', 'LICENSE')) { return $true }
-    return ($leaf -match '^[\w@.+\-\[\]]*\.[A-Za-z0-9]{1,10}$')
+    if ($leaf -notmatch '^[\w@.+\-\[\]]*\.([A-Za-z0-9]{1,10})$') { return $false }
+    # ディレクトリのない名前 (`a.b`) は、ファイルの拡張子として知られたものだけをファイルとみなす (`obj.prop` を作るファイルと誤読しないため)
+    if ($Token -notmatch '/') { return ($script:KnownFileExtensions -contains $Matches[1].ToLowerInvariant()) }
+    return $true
+}
+
+$script:KnownFileExtensions = @(
+    'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts', 'json', 'jsonc', 'json5', 'md', 'mdx', 'sql', 'css', 'scss', 'sass', 'less',
+    'html', 'htm', 'vue', 'svelte', 'astro', 'py', 'pyi', 'ipynb', 'cs', 'csproj', 'sln', 'fs', 'vb', 'go', 'mod', 'sum', 'rs', 'java', 'kt', 'kts',
+    'scala', 'groovy', 'gradle', 'rb', 'erb', 'php', 'swift', 'm', 'mm', 'h', 'hpp', 'c', 'cc', 'cpp', 'dart', 'ex', 'exs', 'erl', 'clj',
+    'lua', 'r', 'jl', 'pl', 'sh', 'bash', 'zsh', 'ps1', 'psm1', 'psd1', 'bat', 'cmd', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'conf', 'env',
+    'xml', 'xsd', 'plist', 'properties', 'lock', 'txt', 'csv', 'tsv', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'pdf',
+    'proto', 'graphql', 'gql', 'prisma', 'tf', 'hcl', 'dockerfile', 'editorconfig', 'gitignore', 'npmrc', 'nvmrc', 'config', 'resx', 'razor', 'cshtml'
+)
+
+function Get-OutsideParenMask([string]$Line) {
+    # 行の各位置が括弧 (半角・全角) の外かどうか。バッククォートの中の括弧は数えない
+    $mask = [bool[]]::new($Line.Length)
+    $depth = 0; $inCode = $false
+    for ($i = 0; $i -lt $Line.Length; $i++) {
+        $c = $Line[$i]
+        if ($c -eq '`') { $inCode = -not $inCode; $mask[$i] = ($depth -eq 0); continue }
+        if (-not $inCode) {
+            if ($c -eq '(' -or $c -eq '（') { $depth++ }
+            elseif (($c -eq ')' -or $c -eq '）') -and $depth -gt 0) { $depth--; $mask[$i] = ($depth -eq 0); continue }
+        }
+        $mask[$i] = ($depth -eq 0)
+    }
+    return $mask
 }
 
 function Get-TaskFileEntries([string]$Section) {
     # 「作成・変更するファイル」節のパス。戻り値: @{ Path; New } の列
-    # New: 同じ行で、パスより後ろに「新規」と書かれている (`a.ts` (新規) )。新規の説明の中で触れただけの既存ファイルは New にしない
+    # - 括弧の中で触れたパス・名前 (`a.ts` (変更: `b.ts` の関数を使う)) は、説明とみなしてファイルにしない
+    # - New: パスの後ろから次のパスまでの説明に「新規」があり、「変更」がない (`a.ts` (新規)、`a.ts` 新規)。
+    #   「(変更: 新規の関数を足す)」のように変更の説明の中で使った「新規」は New にしない
     $out = [System.Collections.Generic.List[object]]::new()
     foreach ($line in ($Section -split "`r?`n")) {
         if ($line -notmatch '^\s*[-*+]\s') { continue }
-        $newAt = $line.IndexOf('新規')
-        foreach ($m in [regex]::Matches($line, '`([^`]+)`')) {
-            $p = $m.Groups[1].Value.Trim()
-            if (-not (Test-PathLikeToken $p)) { continue }
+        $mask = Get-OutsideParenMask $line
+        $ms = @([regex]::Matches($line, '`([^`]+)`') | Where-Object { $mask[$_.Index] -and (Test-PathLikeToken $_.Groups[1].Value.Trim()) })
+        for ($k = 0; $k -lt $ms.Count; $k++) {
+            $p = $ms[$k].Groups[1].Value.Trim()
             if (@($out | Where-Object { $_.Path -eq $p }).Count -gt 0) { continue }
-            $out.Add([pscustomobject]@{ Path = $p; New = ($newAt -ge 0 -and $m.Index -lt $newAt) })
+            $from = $ms[$k].Index + $ms[$k].Length
+            $to = if ($k + 1 -lt $ms.Count) { $ms[$k + 1].Index } else { $line.Length }
+            $spec = $line.Substring($from, $to - $from)
+            $out.Add([pscustomobject]@{ Path = $p; New = ($spec.Contains('新規') -and -not $spec.Contains('変更')) })
         }
     }
     return $out
@@ -576,6 +611,8 @@ function Get-HtmlElementsById([string]$Html, [string]$Id) {
         $out = @()
         foreach ($m in $ms) {
             $tag = $m.Groups[1].Value
+            # 閉じタグのない要素 (input・img など) と自己終了のタグは、開始タグだけを切り出す (文書の末尾まで切り出さないため)
+            if ($tag.ToLowerInvariant() -in $script:VoidHtmlElements -or $m.Value.EndsWith('/>')) { $out += $m.Value; continue }
             $re = [regex]::new('<(/?)' + [regex]::Escape($tag) + '\b[^>]*?(/?)>')
             $depth = 0; $end = $Html.Length
             foreach ($t in $re.Matches($Html, $m.Index)) {
@@ -588,6 +625,8 @@ function Get-HtmlElementsById([string]$Html, [string]$Id) {
     }
     return @()
 }
+
+$script:VoidHtmlElements = @('area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr')
 
 function Get-TaskContext([string]$Root, $Config, [string]$TaskId, [switch]$WithNotes) {
     # 実装担当・レビュー担当が読む「タスクの読み物」を組み立てる:
@@ -635,8 +674,11 @@ function Get-TaskContext([string]$Root, $Config, [string]$TaskId, [switch]$WithN
             $def = Get-IdDefinitionRows $p $ref.Ids
             $already = ($chunks -join "`n")
             if ($def.Text -and @($def.RowTexts | Where-Object { -not $already.Contains($_) }).Count -gt 0) { $chunks.Add($def.Text) }
+            # 定義行も ID の節も見つからない ID は報告する (別のファイルの ID を書き間違えると、黙ってファイル全体が入っていたため)
+            $got = ($chunks -join "`n")
+            foreach ($id in $ref.Ids) { if (-not $got.Contains($id)) { $missing.Add("$($ref.Path): ID「$id」の定義行・節がありません") } }
         }
-        if ($ref.Headings.Count -eq 0 -and $chunks.Count -eq 0) { $chunks.Add((Read-Utf8 $p).TrimEnd()) }
+        if ($ref.Headings.Count -eq 0 -and $ref.Ids.Count -eq 0) { $chunks.Add((Read-Utf8 $p).TrimEnd()) }
         if ($chunks.Count -eq 0) { continue }
         [void]$sb.AppendLine("# [設計] $($ref.Path)").AppendLine("<!-- 指定: $($ref.Line) -->").AppendLine()
         foreach ($c in $chunks) { [void]$sb.AppendLine($c).AppendLine() }
