@@ -20,6 +20,16 @@
     "timeoutSeconds": 1800,
     "rollbackOnFailure": true,
     "allowWithIssues": false,
+    "vault": {
+      "name": "Doppler",
+      "getCommand": "doppler secrets get {name} --plain",
+      "setCommand": "doppler secrets set {name} --silent",
+      "requiredEnv": ["DOPPLER_TOKEN"],
+      "installCommand": "sh -c 'curl -sLf --retry 3 https://cli.doppler.com/install.sh | sh'"
+    },
+    "secrets": [
+      { "name": "DEPLOY_TOKEN", "source": "ユーザーが vault に入れる" }
+    ],
     "targets": [
       {
         "name": "preview",

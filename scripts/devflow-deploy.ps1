@@ -25,6 +25,13 @@
                       終了コード: 0 = 成功 / 1 = デプロイ失敗・拒否 / 2 = 公開後の確認が失敗
   rollback-done <name> -Result success|failed : MCP で行った切り戻しの結果を記録する
 
+  秘密の値 (requiredEnv の環境変数) と vault (deploy.vault。Doppler・1Password・Infisical など):
+  環境変数にない値は、vault の getCommand で取り出し、このスクリプトのプロセスの環境変数にだけ入れる (ファイルには書かない)。
+  デプロイ・確認・切り戻しのコマンドは、その環境変数を引き継ぐ。vault の CLI がなければ installCommand で入れる
+  secrets           : 必要な秘密の値が揃っているかと、足りないものの入手方法 (deploy.secrets の source) を一覧にする
+                      終了コード: 0 = 揃っている / 1 = 足りない
+  set-secret <NAME> -Value <値> : vault の setCommand で vault に保存する (値は標準入力で渡す)。以後のデプロイで使い回す
+
   前提 (all / run / plan が確かめる):
   - デプロイフェーズであること (plan を除く)
   - コードに未コミットの変更がないこと (.devflow/ と docs/ は数えない。記録を書くたびに変わるため)
@@ -44,6 +51,7 @@ param(
     [Parameter(Position = 1)][string]$Name,
     [ValidateSet('', 'success', 'failed')][string]$Result = '',
     [string]$Note = '',
+    [string]$Value = '',
     [switch]$Force
 )
 
@@ -79,6 +87,85 @@ function Get-Target([string]$TargetName) {
     $t = $targets | Where-Object { [string](Get-Field $_ 'name') -eq $TargetName } | Select-Object -First 1
     if (-not $t) { throw "deploy.targets に $TargetName がありません (有効値: $(($targets | ForEach-Object { Get-Field $_ 'name' }) -join ', '))" }
     return $t
+}
+
+function Get-Vault {
+    if ($config.deploy.Contains('vault') -and $config.deploy.vault) { return $config.deploy.vault }
+    return $null
+}
+
+function Expand-VaultCommand([string]$Template, [string]$EnvName) {
+    if ($EnvName -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') { throw "環境変数名として使えません: $EnvName" }
+    return $Template.Replace('{name}', $EnvName)
+}
+
+function Invoke-Capture([string]$Cmd, [string]$InputText = $null) {
+    # コマンドを実行し、標準出力をメモリに受け取る (秘密の値を扱うので、ログのファイルには書かない)
+    $enc = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes("`$PSStyle.OutputRendering = 'PlainText'`n" + $Cmd))
+    Push-Location $root
+    try {
+        if ($null -ne $InputText) { $out = $InputText | & pwsh -NoProfile -NonInteractive -EncodedCommand $enc 2>$null }
+        else { $out = & pwsh -NoProfile -NonInteractive -EncodedCommand $enc 2>$null }
+        $code = $LASTEXITCODE
+    } finally { Pop-Location }
+    return [pscustomobject]@{ ExitCode = $code; Output = (@($out) -join "`n").Trim() }
+}
+
+function Test-CommandExists([string]$Cmd) {
+    $cmdName = Get-TestCommandName $Cmd
+    if (-not $cmdName) { return $true }
+    Push-Location $root
+    try { return [bool](Get-Command $cmdName -ErrorAction SilentlyContinue) } finally { Pop-Location }
+}
+
+function Get-VaultIssues {
+    # vault を使えない理由の一覧 (vault がなければ空)。CLI がなければ installCommand で入れる
+    $v = Get-Vault
+    if (-not $v) { return @() }
+    $ng = @()
+    $get = [string](Get-Field $v 'getCommand')
+    if (-not $get) { return @('deploy.vault.getCommand が未設定です') }
+    if (-not (Test-CommandExists $get)) {
+        $inst = [string](Get-Field $v 'installCommand')
+        if ($inst) {
+            Write-Host "vault の CLI がないため、installCommand で入れています..."
+            $r = Invoke-LoggedCommand $root $inst '.devflow/logs/deploy-vault-install.log' ([int]$config.deploy.timeoutSeconds) 'deploy.timeoutSeconds'
+            if ($r.ExitCode -ne 0) { $ng += "vault の CLI を入れられませんでした (ログ: $($r.Log))" }
+        }
+        if (-not (Test-CommandExists $get)) { $ng += "vault の CLI ``$(Get-TestCommandName $get)`` が見つかりません (deploy.vault.installCommand を設定するか、入れておく)" }
+    }
+    foreach ($e in @(Get-Field $v 'requiredEnv' | Where-Object { $_ })) {
+        if (-not [Environment]::GetEnvironmentVariable([string]$e)) { $ng += "vault の認証に使う環境変数 $e が設定されていません (ユーザーが一度だけ環境の設定に入れる)" }
+    }
+    return $ng
+}
+
+function Get-RequiredSecretNames {
+    return @($targets | ForEach-Object { @(Get-Field $_ 'requiredEnv' | Where-Object { $_ }) } | Select-Object -Unique)
+}
+
+$script:vaultIssues = @()
+$script:notInVault = @()
+function Resolve-Secrets {
+    # 環境変数にない秘密の値を vault から取り出して、このプロセスの環境変数に入れる
+    $missing = @(Get-RequiredSecretNames | Where-Object { -not [Environment]::GetEnvironmentVariable([string]$_) })
+    $v = Get-Vault
+    if ($missing.Count -eq 0 -or -not $v) { return }
+    $script:vaultIssues = @(Get-VaultIssues)
+    if ($script:vaultIssues.Count -gt 0) { return }
+    foreach ($n in $missing) {
+        $r = Invoke-Capture (Expand-VaultCommand ([string](Get-Field $v 'getCommand')) $n)
+        if ($r.ExitCode -eq 0 -and $r.Output) { [Environment]::SetEnvironmentVariable($n, $r.Output) }
+        else { $script:notInVault += $n }
+    }
+}
+
+function Get-SecretSource([string]$EnvName) {
+    # deploy.secrets に書いた入手方法 (MCP・CLI で読み出す手順)
+    foreach ($e in @($config.deploy.secrets | Where-Object { $_ })) {
+        if ([string](Get-Field $e 'name') -eq $EnvName) { return [string](Get-Field $e 'source') }
+    }
+    return ''
 }
 
 function Get-Kind($Target) {
@@ -122,7 +209,10 @@ function Test-Target($Target) {
         if (-not $found) { $ng += "$key のコマンド ``$cmdName`` が見つかりません (インストールと PATH を確かめる)" }
     }
     foreach ($e in @(Get-Field $Target 'requiredEnv' | Where-Object { $_ })) {
-        if (-not [Environment]::GetEnvironmentVariable([string]$e)) { $ng += "環境変数 $e が設定されていません" }
+        if (-not [Environment]::GetEnvironmentVariable([string]$e)) {
+            $where = if ($script:notInVault -contains $e) { 'vault にもない' } elseif (Get-Vault) { 'vault から取り出せなかった' } else { 'vault は未設定' }
+            $ng += "秘密の値 $e がありません ($where。``devflow-deploy.ps1 secrets`` で入手方法を確かめ、``set-secret`` で vault に保存する)"
+        }
     }
     return $ng
 }
@@ -268,6 +358,10 @@ function Invoke-Run($State, $Target) {
 }
 
 $head = (& git -C $root rev-parse --short HEAD 2>$null)
+if ($Command -in @('plan', 'all', 'run', 'finish', 'rollback', 'secrets')) {
+    Resolve-Secrets
+    foreach ($i in $script:vaultIssues) { Write-Host "注意: $i" }
+}
 
 switch ($Command) {
     'plan' {
@@ -383,6 +477,34 @@ switch ($Command) {
         Write-Output "${Name}: $status と記録しました"
         if ($Result -ne 'success') { exit 1 }
     }
+    'secrets' {
+        $names = @(Get-RequiredSecretNames)
+        if ($names.Count -eq 0) { Write-Output '必要な秘密の値はありません (requiredEnv なし)'; exit 0 }
+        $vaultName = if (Get-Vault) { [string](Get-Field (Get-Vault) 'name') } else { '' }
+        $missing = @($names | Where-Object { -not [Environment]::GetEnvironmentVariable([string]$_) })
+        foreach ($n in $names) {
+            if ($missing -contains $n) {
+                $src = Get-SecretSource $n
+                $how = if ($src) { "入手方法: $src" } else { '入手方法: 未設定 (ユーザーが vault に入れる)' }
+                Write-Output "$n : 足りない / $how"
+            } else { Write-Output "$n : あり" }
+        }
+        if ($missing.Count -gt 0) {
+            if ($vaultName) { Write-Output "入手したら ``devflow-deploy.ps1 set-secret <NAME> -Value '<値>'`` で $vaultName に保存する" }
+            else { Write-Output 'deploy.vault が未設定のため、保存先がない (環境変数に入れるか、基本設計で vault を決める)' }
+            exit 1
+        }
+    }
+    'set-secret' {
+        $v = Get-Vault
+        if (-not $v -or -not (Get-Field $v 'setCommand')) { Write-Output 'deploy.vault.setCommand が未設定のため保存できません'; exit 1 }
+        if (-not $Value) { throw 'set-secret <NAME> -Value <値> の形式で指定してください' }
+        $ng = @(Get-VaultIssues)
+        if ($ng.Count -gt 0) { $ng | ForEach-Object { Write-Output "- $_" }; exit 1 }
+        $r = Invoke-Capture (Expand-VaultCommand ([string](Get-Field $v 'setCommand')) $Name) $Value
+        if ($r.ExitCode -ne 0) { Write-Output "$Name を vault に保存できませんでした (終了コード $($r.ExitCode))"; exit 1 }
+        Write-Output "$Name を $(Get-Field $v 'name') に保存しました"
+    }
     'status' {
         $s = Read-DevflowState $root
         $results = if ($s) { Get-Results $s } else { @{} }
@@ -397,6 +519,6 @@ switch ($Command) {
         }
     }
     default {
-        throw "未知のコマンド: $Command (plan|all|run|rollback|finish|rollback-done|status)"
+        throw "未知のコマンド: $Command (plan|all|run|rollback|finish|rollback-done|secrets|set-secret|status)"
     }
 }
