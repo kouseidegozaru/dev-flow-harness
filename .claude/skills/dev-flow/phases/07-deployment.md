@@ -4,7 +4,8 @@
 デプロイ先 (`.devflow/config.json` の `deploy.targets`) へ上から順にデプロイし、公開後の確認まで行って、結果を `docs/deployment-report.md` に残す。
 
 デプロイの実行・順序の確認・失敗時の切り戻し・記録は、すべて `scripts/devflow-deploy.ps1` が機械的に行う。
-**オーケストレーターはデプロイのコマンド (`deploy.targets` の command など) を直接実行しない。** 失敗しても、コードや設定を直して再実行しない
+**オーケストレーターはデプロイのコマンド (`deploy.targets` の command など) を直接実行しない。** MCP で行うデプロイ先 (`kind: agent`) だけは、
+`devflow-deploy.ps1 all` が出した手順どおりに MCP のツールで行い、結果をスクリプトに記録する。失敗しても、コードや設定を直して再実行しない
 (直すかどうかは人が決める。最終レポートで報告する)。
 
 ## 入力
@@ -41,6 +42,14 @@
    失敗したらそこで止まり、後のデプロイ先は実行しない。公開後の確認が失敗したときは、`rollbackCommand` があれば自動で切り戻す
    (`deploy.rollbackOnFailure` が false なら切り戻さない)。
 
+   - exit 5 (`AGENT:` と手順が出る): MCP で行うデプロイ先 (`kind: agent`)。次を行い、`all` をもう一度実行する (これを exit 5 が出なくなるまで繰り返す):
+     1. 出力の「使うツール」がツール一覧にあるかを確かめる (なければ ToolSearch で探す)。見つからなければ何もせず、
+        `devflow-deploy.ps1 finish <name> -Result failed -Note 'MCP 未接続: <ツール>'` を実行する (レポートの「人がすること」に、claude.ai のコネクタの設定でそのサービスを接続することを書く)
+     2. 出力の手順どおりに、MCP のツールで行う。**手順にない操作はしない** (別の環境・設定に触れない、失敗しても手順を変えて試し直さない)。
+        MCP で読み出した秘密の値は、設定先のツールへそのまま渡すだけにし、ファイル・コマンドの引数・会話への報告に書かない
+     3. `devflow-deploy.ps1 finish <name> -Result success|failed -Note '<公開した URL、または失敗の理由>'` で記録する
+        (success なら公開後の確認が走る)。出力に `ROLLBACK-BY-AGENT:` が出たら、その手順どおりに MCP で切り戻し、
+        `devflow-deploy.ps1 rollback-done <name> -Result success|failed` で記録する。finish が 0 以外なら、`all` を再実行せず exit 1 と同じに扱う
    - exit 0: 判定「成功」
    - exit 1: 判定「失敗」。**再実行しない・コマンドを直接打たない・切り戻しを追加で試さない。** 出力 (失敗したデプロイ先・理由・切り戻しの結果) をレポートに書く。
      そのサービスの MCP がこのセッションにあれば、読み取りのツールだけ (デプロイの状態・ビルドのログ・実行時のエラー) で原因を調べ、

@@ -148,10 +148,13 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
   - 検証レポートの判定が「漏れなし」で、blocked のタスクがないときだけデプロイする (`deploy.allowWithIssues` で外せる)
   - コードに未コミットの変更があればデプロイしない。`deploy.targets` を上から順に実行し、前の環境 (ステージングなど) が同じコードで成功していなければ次 (本番) へ進まない
   - 各環境で、デプロイ (`command`) → 公開後の確認 (`smokeCommand`)。確認が失敗したら `rollbackCommand` で自動で切り戻し、後の環境は実行しない
+  - MCP で行う環境 (`kind: "agent"`) は、`all` が手順 (`steps`) を出して止まり (exit 5)、オーケストレーターがその手順どおりに MCP のツールで行って
+    `finish` で記録する。公開後の確認と、失敗時の切り戻し (`rollbackSteps`) の記録はスクリプトが行う。秘密の値を環境変数に用意しなくて済む
   - 失敗しても直して再実行はしない。結果を `docs/deployment-report.md` に書いて phase を `done` にする。直したら `/dev-flow redo deployment` で再開する
     (同じコードで成功済みの環境は飛ばされる)
-  - デプロイ先は基本設計で、ユーザーの手間が最も少ないものを推奨にして決める。比べる観点は、対話なしで動かせる CLI があるか (デプロイに必須)、
-    MCP があるか (準備と失敗時の調査をエージェントが済ませられる)、ユーザーにしかできない作業 (トークンの発行など) の数。
+  - デプロイ先は基本設計で、**秘密の値をユーザーにコピーさせない** ものを推奨にして決める。操作手段は、MCP (claude.ai のコネクタなら OAuth で接続するだけ) か
+    Git 連携の自動デプロイ → トークン 1 つで済む CLI → サービスごとにキーが要るもの、の順に選ぶ。
+    アプリが使う設定値を別のサービスから受け渡すとき (DB の URL・公開キーなど) も、両方の MCP があればエージェントが読み出して設定する。
     ユーザーがする作業は `architecture.md` の「ユーザーが一度だけする作業」にまとまり、詳細設計の終わりに案内される
   - 必要な秘密 (トークンなど) は `requiredEnv` に環境変数名だけを書き、値は環境に設定しておく (クラウドでは環境の設定の環境変数)。ログ (`.devflow/logs/deploy-*.log`) は git の管理外
 
@@ -269,7 +272,7 @@ scripts/
 |------------|--------------|
 | `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `task-context <ID>\|all` (タスクの読み物を `.devflow/context/<ID>.md` に書き出す) / `check-branches` (ほかのブランチで dev-flow が進んでいないか。exit 5 なら進んでいる) / `add-dep <ID> <依存 ID> [-Reason]` (依存を足して todo に戻す) / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
 | `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
-| `devflow-deploy.ps1` | `plan` (実行できるかを確かめる。exit 3 = デプロイ先なし、4 = 検証の結果が前提を満たさない) / `all` (全環境を順にデプロイ) / `run <name> [-Force]` / `rollback <name>` / `status` |
+| `devflow-deploy.ps1` | `plan` (実行できるかを確かめる。exit 3 = デプロイ先なし、4 = 検証の結果が前提を満たさない) / `all` (全環境を順にデプロイ。exit 5 = MCP で行う環境の手順を出して止まった) / `run <name> [-Force]` / `rollback <name>` / `finish <name> -Result success\|failed [-Note]` / `rollback-done <name> -Result success\|failed` / `status` |
 | `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]`。test は結果ファイルに担当 ID 付きの失敗したテストがあること、feat / refactor / fix は全テストの成功を確かめる |
 
 ## ID とトレーサビリティ
@@ -299,7 +302,7 @@ scripts/
 | `test.timeoutSeconds` | 900 | テストの実行がこの秒数を超えたら止め、失敗として扱う (0 で無制限) |
 | `test.resultGlobs` | TRX / JUnit の典型パス | テスト結果ファイルの場所 |
 | `test.files` / `source.files` | | テストコード / 本番コードの場所 |
-| `deploy.targets` | (詳細設計で設定) | デプロイ先の一覧 (上から順に実行)。各要素は `name`、`command`、`smokeCommand` (公開後の確認)、`rollbackCommand`、`requiredEnv` (必要な環境変数名) |
+| `deploy.targets` | (詳細設計で設定) | デプロイ先の一覧 (上から順に実行)。各要素は `name`、`command`、`smokeCommand` (公開後の確認)、`rollbackCommand`、`requiredEnv` (必要な環境変数名)。MCP で行う環境は `kind: "agent"` と `steps` (手順)、`rollbackSteps`、`requiredMcp` (使うツールの接頭辞) |
 | `deploy.timeoutSeconds` | 1800 | デプロイ・確認・切り戻しの各コマンドがこの秒数を超えたら止め、失敗として扱う (0 で無制限) |
 | `deploy.rollbackOnFailure` | true | 公開後の確認が失敗したら、自動で切り戻す |
 | `deploy.allowWithIssues` | false | true なら、検証に未解決の漏れや blocked のタスクがあってもデプロイする |

@@ -9,11 +9,21 @@
                       終了コード: 0 = 実行できる / 1 = 実行できない / 3 = デプロイ先が設定されていない / 4 = 検証の結果が前提を満たさない
   all               : plan の確認のあと、全デプロイ先を上から順に run する。失敗したらそこで止める (後のデプロイ先は実行しない)
                       終了コード: 0 = 全部成功 / 1 = 失敗 (または実行できない) / 3 = デプロイ先なし / 4 = 検証の結果が前提を満たさない
+                      / 5 = MCP で行うデプロイ先の手順を出して止まった (下の kind が agent)
   run <name>        : command → smokeCommand (公開後の確認) を実行し、.devflow/deploy-log.md と state.json に記録する。
                       公開後の確認が失敗したら、deploy.rollbackOnFailure (既定 true) のとき rollbackCommand で切り戻す
                       終了コード: 0 = 成功 / 1 = デプロイ失敗・実行を拒否 / 2 = 公開後の確認が失敗
   rollback <name>   : rollbackCommand を実行し、記録する (人が手で戻すとき用)。終了コード: 0 = 成功 / 1 = 失敗 / 3 = 未設定
   status            : デプロイ先ごとの最後の結果
+
+  kind が agent のデプロイ先 (MCP で行う。秘密の値を環境変数に用意しなくて済むため):
+  all はそのデプロイ先の前提を確かめて agent-pending と記録し、手順 (steps) を出して exit 5 で止まる。
+  オーケストレーターが steps どおりに MCP のツールで行い、結果を finish で記録してから、all をもう一度実行する
+  finish <name> -Result success|failed [-Note ...]
+                    : agent の結果を記録する。success なら smokeCommand を実行する。確認が失敗したら、rollbackCommand があれば実行し、
+                      rollbackSteps しかなければ手順を出す (MCP で戻して rollback-done で記録する)
+                      終了コード: 0 = 成功 / 1 = デプロイ失敗・拒否 / 2 = 公開後の確認が失敗
+  rollback-done <name> -Result success|failed : MCP で行った切り戻しの結果を記録する
 
   前提 (all / run / plan が確かめる):
   - デプロイフェーズであること (plan を除く)
@@ -27,10 +37,13 @@
   pwsh -NoProfile -File scripts/devflow-deploy.ps1 plan
   pwsh -NoProfile -File scripts/devflow-deploy.ps1 all
   pwsh -NoProfile -File scripts/devflow-deploy.ps1 rollback production
+  pwsh -NoProfile -File scripts/devflow-deploy.ps1 finish preview -Result success -Note 'https://xxx.vercel.app'
 #>
 param(
     [Parameter(Position = 0)][string]$Command = 'plan',
     [Parameter(Position = 1)][string]$Name,
+    [ValidateSet('', 'success', 'failed')][string]$Result = '',
+    [string]$Note = '',
     [switch]$Force
 )
 
@@ -68,6 +81,20 @@ function Get-Target([string]$TargetName) {
     return $t
 }
 
+function Get-Kind($Target) {
+    $k = [string](Get-Field $Target 'kind')
+    if ($k -eq 'agent') { return 'agent' }
+    return 'command'
+}
+
+function Get-Steps($Target, [string]$Key) {
+    # steps / rollbackSteps (文字列か文字列の配列) を番号付きの行にする
+    $list = @(Get-Field $Target $Key | Where-Object { $_ })
+    if ($list.Count -eq 0) { return '' }
+    $i = 0
+    return (($list | ForEach-Object { $i++; "  $i. $_" }) -join "`n")
+}
+
 function Test-SameCode([string]$Commit) {
     # $Commit と HEAD でコード (.devflow/ と docs/ 以外) が同じか
     if (-not $Commit) { return $false }
@@ -80,10 +107,12 @@ function Test-Target($Target) {
     $ng = @()
     $n = [string](Get-Field $Target 'name')
     if ($n -notmatch '^[A-Za-z0-9_-]+$') { $ng += "名前 ``$n`` は英数字・-・_ だけにする (ログのファイル名に使うため)" }
+    $agent = (Get-Kind $Target) -eq 'agent'
+    if ($agent -and -not (Get-Steps $Target 'steps')) { $ng += 'kind が agent なのに steps (MCP で行う手順) が未設定です' }
     foreach ($key in 'command', 'smokeCommand', 'rollbackCommand') {
         $c = [string](Get-Field $Target $key)
         if (-not $c) {
-            if ($key -eq 'command') { $ng += 'command が未設定です' }
+            if ($key -eq 'command' -and -not $agent) { $ng += 'command が未設定です' }
             continue
         }
         $cmdName = Get-TestCommandName $c
@@ -160,8 +189,8 @@ function Invoke-Rollback($State, $Target, [string]$Why) {
     return "切り戻し: 成功した (ログ: $($r.Log))"
 }
 
-function Invoke-Run($State, $Target) {
-    # 1 つのデプロイ先へのデプロイ。戻り値: 終了コード (0 / 1 / 2)
+function Get-RunIssues($State, $Target) {
+    # そのデプロイ先へデプロイしてはいけない理由の一覧
     $n = [string](Get-Field $Target 'name')
     $ng = @(Test-Target $Target)
     if ((Get-CodeDirty).Count -gt 0) { $ng += 'コードに未コミットの変更があります (コミットしたものだけをデプロイする)' }
@@ -177,10 +206,54 @@ function Invoke-Run($State, $Target) {
             }
         }
     }
+    return $ng
+}
+
+function Invoke-Smoke($State, $Target, [string]$DeployLog) {
+    # 公開後の確認と、失敗したときの切り戻し。戻り値: 終了コード (0 / 2)
+    $n = [string](Get-Field $Target 'name')
+    if (-not (Get-Field $Target 'smokeCommand')) {
+        Save-Result $State $n 'success' $head $DeployLog '公開後の確認: なし (smokeCommand 未設定)'
+        Write-Host "OK: $n へデプロイしました (公開後の確認は未設定。ログ: $DeployLog)"
+        return 0
+    }
+    $sm = Invoke-Step $Target 'smokeCommand' 'smoke'
+    if ($sm.ExitCode -ne 0) {
+        $why = if ($sm.TimedOut) { '公開後の確認がタイムアウト' } else { "公開後の確認が失敗 (終了コード $($sm.ExitCode))" }
+        Save-Result $State $n 'smoke-failed' $head $sm.Log "$why。デプロイの記録: $DeployLog"
+        Write-Host "NG: $n へのデプロイは終わったが、$why"
+        Write-LogTail $sm.Log
+        if (-not (Get-ConfigFlag 'rollbackOnFailure' $true)) { Write-Host '切り戻し: deploy.rollbackOnFailure が false のため行っていない' }
+        elseif (Get-Field $Target 'rollbackCommand') { Write-Host (Invoke-Rollback $State $Target $why) }
+        elseif (Get-Steps $Target 'rollbackSteps') {
+            Write-Host "ROLLBACK-BY-AGENT: 次の手順で $n を切り戻し、結果を ``devflow-deploy.ps1 rollback-done $n -Result success|failed`` で記録すること:"
+            Write-Host (Get-Steps $Target 'rollbackSteps')
+        }
+        else { Write-Host '切り戻し: rollbackCommand / rollbackSteps が未設定のため行っていない (人が手で戻すこと)' }
+        return 2
+    }
+    Save-Result $State $n 'success' $head $DeployLog "公開後の確認: 成功 ($($sm.Log))"
+    Write-Host "OK: $n へデプロイし、公開後の確認も成功しました (記録: $DeployLog、$($sm.Log))"
+    return 0
+}
+
+function Invoke-Run($State, $Target) {
+    # 1 つのデプロイ先へのデプロイ。戻り値: 終了コード (0 / 1 / 2 / 5 = agent の手順を出して止まった)
+    $n = [string](Get-Field $Target 'name')
+    $ng = @(Get-RunIssues $State $Target)
     if ($ng.Count -gt 0) {
         Write-Host "$n へのデプロイを拒否:"
         $ng | ForEach-Object { Write-Host "- $_" }
         return 1
+    }
+    if ((Get-Kind $Target) -eq 'agent') {
+        Save-Result $State $n 'agent-pending' $head '' 'MCP で行う手順を出した'
+        Write-Host "AGENT: $n へのデプロイは MCP で行う (コミット $head)。次の手順どおりに行い、ほかの操作はしないこと:"
+        Write-Host (Get-Steps $Target 'steps')
+        $mcp = @(Get-Field $Target 'requiredMcp' | Where-Object { $_ })
+        if ($mcp.Count -gt 0) { Write-Host "使うツール: $($mcp -join ', ') (ツール一覧にないなら、何もせず ``finish $n -Result failed -Note 'MCP 未接続: <ツール>'``)" }
+        Write-Host "終わったら ``devflow-deploy.ps1 finish $n -Result success|failed -Note '<公開した URL・失敗の理由>'`` で記録し、all をもう一度実行すること"
+        return 5
     }
     Write-Host "$n へデプロイしています (コミット $head)..."
     $r = Invoke-Step $Target 'command' 'deploy'
@@ -191,24 +264,7 @@ function Invoke-Run($State, $Target) {
         Write-LogTail $r.Log
         return 1
     }
-    if (-not (Get-Field $Target 'smokeCommand')) {
-        Save-Result $State $n 'success' $head $r.Log '公開後の確認: なし (smokeCommand 未設定)'
-        Write-Host "OK: $n へデプロイしました (公開後の確認は未設定。ログ: $($r.Log))"
-        return 0
-    }
-    $sm = Invoke-Step $Target 'smokeCommand' 'smoke'
-    if ($sm.ExitCode -ne 0) {
-        $why = if ($sm.TimedOut) { '公開後の確認がタイムアウト' } else { "公開後の確認が失敗 (終了コード $($sm.ExitCode))" }
-        Save-Result $State $n 'smoke-failed' $head $sm.Log "$why。デプロイのログ: $($r.Log)"
-        Write-Host "NG: $n へのデプロイは終わったが、$why"
-        Write-LogTail $sm.Log
-        if (Get-ConfigFlag 'rollbackOnFailure' $true) { Write-Host (Invoke-Rollback $State $Target $why) }
-        else { Write-Host '切り戻し: deploy.rollbackOnFailure が false のため行っていない' }
-        return 2
-    }
-    Save-Result $State $n 'success' $head $r.Log "公開後の確認: 成功 ($($sm.Log))"
-    Write-Host "OK: $n へデプロイし、公開後の確認も成功しました (ログ: $($r.Log)、$($sm.Log))"
-    return 0
+    return (Invoke-Smoke $State $Target $r.Log)
 }
 
 $head = (& git -C $root rev-parse --short HEAD 2>$null)
@@ -225,10 +281,18 @@ switch ($Command) {
         foreach ($t in $targets) {
             $i++
             $n = [string](Get-Field $t 'name')
-            Write-Output "$i. $n"
-            Write-Output "   デプロイ: $(Get-Field $t 'command')"
+            if ((Get-Kind $t) -eq 'agent') {
+                Write-Output "$i. $n (MCP で行う)"
+                Write-Output "   手順:`n$((Get-Steps $t 'steps') -replace '(?m)^', '   ')"
+                $mcp = @(Get-Field $t 'requiredMcp' | Where-Object { $_ })
+                if ($mcp.Count -gt 0) { Write-Output "   使うツール: $($mcp -join ', ') (要確認: このスクリプトでは確かめられない。オーケストレーターがツール一覧で確かめる)" }
+            } else {
+                Write-Output "$i. $n"
+                Write-Output "   デプロイ: $(Get-Field $t 'command')"
+            }
             Write-Output "   公開後の確認: $(if (Get-Field $t 'smokeCommand') { Get-Field $t 'smokeCommand' } else { 'なし' })"
-            Write-Output "   切り戻し: $(if (Get-Field $t 'rollbackCommand') { Get-Field $t 'rollbackCommand' } else { 'なし' })"
+            $rb = if (Get-Field $t 'rollbackCommand') { Get-Field $t 'rollbackCommand' } elseif (Get-Steps $t 'rollbackSteps') { 'MCP で行う (rollbackSteps)' } else { 'なし' }
+            Write-Output "   切り戻し: $rb"
             if ($results.Contains($n)) {
                 $r = $results[$n]
                 $same = if (Test-SameCode $r.commit) { '今と同じコード' } else { '今と違うコード' }
@@ -269,6 +333,7 @@ switch ($Command) {
                 continue
             }
             $code = Invoke-Run $s $t
+            if ($code -eq 5) { exit 5 }
             if ($code -ne 0) {
                 $rest = @($targets | Select-Object -Skip ([Array]::IndexOf($targets, $t) + 1) | ForEach-Object { Get-Field $_ 'name' })
                 if ($rest.Count -gt 0) { Write-Output "後のデプロイ先は実行していません: $($rest -join ', ')" }
@@ -290,6 +355,34 @@ switch ($Command) {
         Write-Output $msg
         if ($msg -notmatch '成功') { exit 1 }
     }
+    'finish' {
+        $s = Assert-DeploymentPhase
+        $t = Get-Target $Name
+        if ((Get-Kind $t) -ne 'agent') { throw "$Name は kind が agent ではありません (run を使う)" }
+        if (-not $Result) { throw 'finish <name> -Result success|failed の形式で指定してください' }
+        $results = Get-Results $s
+        $r = if ($results.Contains($Name)) { $results[$Name] } else { $null }
+        if (-not $r -or $r.status -ne 'agent-pending' -or -not (Test-SameCode $r.commit)) {
+            Write-Output "finish を拒否: $Name は今のコードで手順を出していません (先に all を実行する)"
+            exit 1
+        }
+        $rec = if ($Note) { "MCP で実施: $Note" } else { 'MCP で実施' }
+        if ($Result -eq 'failed') {
+            Save-Result $s $Name 'deploy-failed' $head '' $rec
+            Write-Output "${Name}: deploy-failed と記録しました"
+            exit 1
+        }
+        exit (Invoke-Smoke $s $t $rec)
+    }
+    'rollback-done' {
+        $s = Assert-DeploymentPhase
+        $null = Get-Target $Name
+        if (-not $Result) { throw 'rollback-done <name> -Result success|failed の形式で指定してください' }
+        $status = if ($Result -eq 'success') { 'rolled-back' } else { 'rollback-failed' }
+        Save-Result $s $Name $status $head '' "MCP で切り戻し$(if ($Note) { ": $Note" })"
+        Write-Output "${Name}: $status と記録しました"
+        if ($Result -ne 'success') { exit 1 }
+    }
     'status' {
         $s = Read-DevflowState $root
         $results = if ($s) { Get-Results $s } else { @{} }
@@ -304,6 +397,6 @@ switch ($Command) {
         }
     }
     default {
-        throw "未知のコマンド: $Command (plan|all|run|rollback|status)"
+        throw "未知のコマンド: $Command (plan|all|run|rollback|finish|rollback-done|status)"
     }
 }
