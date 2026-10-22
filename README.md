@@ -1,9 +1,9 @@
 # dev-flow-harness
 
-Claude Code 上で **企画・構想 → 要件定義 → 基本設計 → 詳細設計 → 実装 → 検証** の 6 フェーズで開発を進めるハーネス
+Claude Code 上で **企画・構想 → 要件定義 → 基本設計 → 詳細設計 → 実装 → 検証 → デプロイ** の 7 フェーズで開発を進めるハーネス
 (スキル + サブエージェント + フック + スクリプト + ドキュメント規約)。
 
-- 前半 4 フェーズで仕様を対話で詰め、実装・検証はユーザーへの質問なしに自動で進める
+- 前半 4 フェーズで仕様を対話で詰め、実装・検証・デプロイはユーザーへの質問なしに自動で進める
 - 各フェーズはコンテキストをクリアして始め、前フェーズまでの成果物ファイル (`docs/`) だけを入力にする
 - 実装はテスト駆動 (Red → Green → Refactor) で、タスクごとに細かくコミットする
 - 設計の決定事項すべてに ID を振り、`scripts/devflow-trace.ps1` で実装漏れがないことを機械的に検証する
@@ -71,6 +71,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 | 4. 詳細設計 | ほぼ自律。上流の抜けは推奨で補って記録し、完了時にまとめて報告する。質問は承認済みの決定を覆すもの・お金や法令などで根拠がないものだけ (1 回にまとめて、多くても 5 件程度) | `docs/04-detailed-design/`、`.devflow/config.json` |
 | 5. 実装 | 完全自動 (オーケストレーター + 実装担当サブエージェント) | コード、テスト、TDD のコミット |
 | 6. 検証 | 完全自動 (実装に続けて同じセッションで実行) | `docs/traceability.md`、`docs/verification-report.md` |
+| 7. デプロイ | 完全自動 (検証に続けて同じセッションで実行)。検証で漏れがなく blocked もないときだけ、`devflow-deploy.ps1` が環境を順にデプロイする | `docs/deployment-report.md` |
 
 対話フェーズ (1〜4) の終わりに成果物のドラフトが提示され、承認すると `docs/` への保存・コミット・state の更新が行われ、
 `/clear` するよう案内される。
@@ -114,7 +115,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
   `devflow-trace.ps1 -Mode design` で機械的に確かめる
 - テストの実行方法 (`test.command` など) を `.devflow/config.json` に設定する
 
-### 実装・検証 (完全自動)
+### 実装・検証・デプロイ (完全自動)
 
 詳細設計が終わると案内が出る。テストの実行やコミットの許可確認で止まらないよう、`claude --permission-mode bypassPermissions` で起動し直して、
 何か一言 (「続けて」など) を送る。そのセッションが **オーケストレーター** になり、最後まで質問なしで進む。
@@ -127,6 +128,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
   短い報告を受け取る ◀──────────────────────────  handoff.md を書いてコミットし、終える
   タスクが残っていれば、新しい実装担当を起動する (handoff.md から再開)
   全タスクが終わったら検証フェーズ (trace で漏れを調べ、漏れがあれば追加タスクを作って実装担当に戻す)
+  検証が終わったらデプロイフェーズ (devflow-deploy.ps1 all で環境を順にデプロイし、結果をレポートにする)
 ```
 
 - **オーケストレーター** はタスクの中身・設計・コードを読まず、実装担当を起動して待つだけ。コンテキストがほとんど増えない
@@ -141,15 +143,28 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 - 同じテストで `maxAttemptsPerTest` 回失敗した、設計どおりでは実装できない、設計にない判断が必要、のいずれかに当たったタスクは blocked として記録し、依存しない次のタスクへ進む。
   blocked にするとき、そのタスクの変更は `revert(<TASK-ID>)` コミットで取り消され、全テストが通る状態に戻る (失敗するテストが残って後続のタスクまで Green にできなくなるのを防ぐ。取り消したコミットと復元方法は `.devflow/blocked.md` に残る)
 - **検証** は `devflow-trace.ps1 -Mode full` (全テスト実行・スタブ検索・ID の網羅性) で行う。漏れがあれば追加タスク `TASK-V<ラウンド>-<連番>` を作って実装に戻し、
-  漏れがなくなる (または残りが blocked だけになる) か `maxVerificationRounds` に達したら、最終レポートを書いて phase を `done` にする
+  漏れがなくなる (または残りが blocked だけになる) か `maxVerificationRounds` に達したら、最終レポートを書いてデプロイフェーズへ進む
+- **デプロイ** は `scripts/devflow-deploy.ps1 all` が行う (オーケストレーターはデプロイのコマンドを直接打たない)。確認なしで進むので、次を機械的に守る:
+  - 検証レポートの判定が「漏れなし」で、blocked のタスクがないときだけデプロイする (`deploy.allowWithIssues` で外せる)
+  - コードに未コミットの変更があればデプロイしない。`deploy.targets` を上から順に実行し、前の環境 (ステージングなど) が同じコードで成功していなければ次 (本番) へ進まない
+  - 各環境で、デプロイ (`command`) → 公開後の確認 (`smokeCommand`)。確認が失敗したら `rollbackCommand` で自動で切り戻し、後の環境は実行しない
+  - MCP で行う環境 (`kind: "agent"`) は、`all` が手順 (`steps`) を出して止まり (exit 5)、オーケストレーターがその手順どおりに MCP のツールで行って
+    `finish` で記録する。公開後の確認と、失敗時の切り戻し (`rollbackSteps`) の記録はスクリプトが行う。秘密の値を環境変数に用意しなくて済む
+  - 失敗しても直して再実行はしない。結果を `docs/deployment-report.md` に書いて phase を `done` にする。直したら `/dev-flow redo deployment` で再開する
+    (同じコードで成功済みの環境は飛ばされる)
+  - デプロイ先は基本設計で、**秘密の値をユーザーにコピーさせない** ものを推奨にして決める。操作手段は、MCP (claude.ai のコネクタなら OAuth で接続するだけ) か
+    Git 連携の自動デプロイ → トークン 1 つで済む CLI → サービスごとにキーが要るもの、の順に選ぶ。
+    アプリが使う設定値を別のサービスから受け渡すとき (DB の URL・公開キーなど) も、両方の MCP があればエージェントが読み出して設定する。
+    ユーザーがする作業は `architecture.md` の「ユーザーが一度だけする作業」にまとまり、詳細設計の終わりに案内される
+  - 必要な秘密 (トークンなど) は `requiredEnv` に環境変数名だけを書き、値は環境に設定しておく (クラウドでは環境の設定の環境変数)。ログ (`.devflow/logs/deploy-*.log`) は git の管理外
 
-**注意:** `bypassPermissions` は git・テスト・ファイル編集を確認なしで行う。信頼できるリポジトリで、できればコンテナや専用の作業環境で実行すること。
+**注意:** `bypassPermissions` は git・テスト・ファイル編集・デプロイを確認なしで行う。信頼できるリポジトリで、できればコンテナや専用の作業環境で実行すること。
 許可リストを細かく設定する場合は `acceptEdits` + `permissions.allow` (テストコマンド、`git`、`pwsh -NoProfile -File scripts/devflow-*`) でもよい。
 
 ### 途中から再開する
 
 - **対話フェーズ**: `claude` を起動して `/dev-flow` (または何か一言。SessionStart フックが進行中のフェーズを知らせる)。`.devflow/decisions/<phase>.md` から続ける
-- **実装・検証**: `claude --permission-mode bypassPermissions` を起動して `/dev-flow` (または何か一言)。in_progress のタスクと `handoff.md` から続ける。
+- **実装・検証・デプロイ**: `claude --permission-mode bypassPermissions` を起動して `/dev-flow` (または何か一言)。in_progress のタスクと `handoff.md` から続ける。
   途中の作業はタスクごと・引き継ぎごとにコミットされている
 - **自動フェーズが止まったとき** (テスト環境の不備、タスク一覧が読めない、進捗がない、残りが blocked だけ): 原因を直してから再開する。
   理由ごとの見る場所と直し方は [phases/05-implementation.md](.claude/skills/dev-flow/phases/05-implementation.md) の「止まったあとの再開」。
@@ -162,7 +177,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 /dev-flow redo requirements
 ```
 
-影響の説明と確認のあと、`devflow-state.ps1 set-phase <phase>` で指定フェーズに戻る (検証ラウンド数と追加タスクの記録は初期化される)。成果物は消さず、そのフェーズの手順で更新する。
+影響の説明と確認のあと、`devflow-state.ps1 set-phase <phase>` で指定フェーズに戻る (検証ラウンド数と追加タスクの記録は初期化される。デプロイより前に戻すときは、デプロイの結果の記録も初期化される)。成果物は消さず、そのフェーズの手順で更新する。
 やり直したフェーズより後の成果物は古くなるので、以降のフェーズも順に通し直す (`devflow-trace` が不整合を検出する)。
 詳細設計を通し直すとき、内容や参照する設計の節を変えたタスクだけを todo に戻し、変えていない done のタスクは done のまま残す
 (実装済みの分を作り直さないため)。
@@ -180,6 +195,11 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 | 3. 人が確認する項目 | `manual` 種別と `review` 種別の ID (review には、実装担当が実装時に `.devflow/review-log.md` に残した自己確認の記録が付く) |
 | 4. 検証で見つかって修正した漏れ | 機械チェックが見つけ、追加タスクで実装した内容 |
 | 5. 未解決の漏れ | 最大ラウンド超過や設計の不備で残ったもの |
+
+### デプロイレポートを読む
+
+`docs/deployment-report.md`: 冒頭の判定 (成功 / 失敗 / 未実施 / デプロイなし)、環境ごとの結果、切り戻したもの、人がすること、
+公開後に人が確認すること。直し方は [phases/07-deployment.md](.claude/skills/dev-flow/phases/07-deployment.md) の「止まったあとの再開」。
 
 ## コミット規約
 
@@ -202,7 +222,7 @@ pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind test -Scope TASK-003 -Mes
 .claude/
   skills/dev-flow/
     SKILL.md                  # ルーター: state を読んで各フェーズの手順書を読み込む
-    phases/01〜06-*.md        # 各フェーズの 入力 / 進め方 / 完了条件 / 出力テンプレート
+    phases/01〜07-*.md        # 各フェーズの 入力 / 進め方 / 完了条件 / 出力テンプレート
     references/
       interview-rules.md      # 対話フェーズ共通の詰め方
       doc-structure.md        # 設計ドキュメントの分割ルール
@@ -216,7 +236,7 @@ pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind test -Scope TASK-003 -Mes
     tdd-implementer.md        # 実装担当: タスクを次々に TDD で実装。閾値超えで handoff を書いて終える
   hooks/
     session-start.ps1         # /clear 後の次フェーズ開始 (実装・検証はオーケストレーターとして開始)、compact 後の再読指示
-    stop.ps1                  # オーケストレーター: 作業が残っていれば応答を終えさせない
+    stop.ps1                  # オーケストレーター: 作業 (実装・検証・デプロイ) が残っていれば応答を終えさせない
     post-tool-use.ps1         # 実装担当: 自分のコンテキスト使用率を測り、閾値超えを知らせる
     subagent-start.ps1        # 実装担当: 開始時刻・開始時の使用量の記録を作る
     subagent-stop.ps1         # 実装担当: 閾値未満なら次のタスクへ進ませ、閾値超えなら引き継ぎが済むまで終えさせない
@@ -227,6 +247,7 @@ scripts/
   devflow-state.ps1           # state.json / tasks/index.md の状態操作 (エージェントに手で書き換えさせない)
   devflow-trace.ps1 (.sh)     # ID の網羅性検証、traceability.md・各層の ID 一覧 (ids.md) の生成
   devflow-commit.ps1          # コミット規約の機械的な強制
+  devflow-deploy.ps1          # デプロイの実行 (前提の確認、環境の順序、公開後の確認、失敗時の切り戻し、記録)
   devflow-install.ps1         # 対象プロジェクトへの導入
   devflow-setup-cloud.sh      # pwsh がなければ入れる (クラウドのセッション用)
 .devflow/                     # (対象プロジェクトに作られる)
@@ -239,6 +260,7 @@ scripts/
   blocked.md                  # 行き詰まったタスクの記録
   review-log.md               # review 種別の ID の自己確認の記録 (trace が有無を検査する) と、実装担当が設計にない細部を決めた記録 ([判断] の行)
   verification-log.md         # 検証ラウンドごとの漏れと追加タスク
+  deploy-log.md               # デプロイ・公開後の確認・切り戻しの記録
   implementer.json            # 実行中の実装担当の記録 (git 管理外)
   orchestrator.json           # オーケストレーターの登録 (git 管理外)
   context/<TASK-ID>.md        # task-context が書き出すタスクの読み物 (git 管理外)
@@ -250,6 +272,7 @@ scripts/
 |------------|--------------|
 | `devflow-state.ps1` | `show` / `phase` / `init` / `start-phase` / `complete-phase <phase>` / `set-phase <phase> [-KeepVerification]` / `impl-status` / `next-task` / `task <ID> <todo\|in_progress\|done\|blocked> [-Reason] [-Force]` / `task-context <ID>\|all` (タスクの読み物を `.devflow/context/<ID>.md` に書き出す) / `check-branches` (ほかのブランチで dev-flow が進んでいないか。exit 5 なら進んでいる) / `add-dep <ID> <依存 ID> [-Reason]` (依存を足して todo に戻す) / `run start\|stop` / `verification-round` / `add-verification-task <ID>` / `config` / `preflight` (テストを実行できる環境かを確かめる) |
 | `devflow-trace.ps1` | `-Mode docs \| design \| full \| task [-Task <ID>]`、`-UpdateIndexes` (各層の ids.md を生成)、`-NoRun` (テストを実行しない)、`-NoReport`。終了コード 0 = 漏れなし、1 = 漏れあり、2 = エラー |
+| `devflow-deploy.ps1` | `plan` (実行できるかを確かめる。exit 3 = デプロイ先なし、4 = 検証の結果が前提を満たさない) / `all` (全環境を順にデプロイ。exit 5 = MCP で行う環境の手順を出して止まった) / `run <name> [-Force]` / `rollback <name>` / `finish <name> -Result success\|failed [-Note]` / `rollback-done <name> -Result success\|failed` / `status` |
 | `devflow-commit.ps1` | `-Kind test\|feat\|refactor\|fix\|docs\|chore -Scope <scope> -Message <msg> [-Paths ...]`。test は結果ファイルに担当 ID 付きの失敗したテストがあること、feat / refactor / fix は全テストの成功を確かめる |
 
 ## ID とトレーサビリティ
@@ -279,6 +302,10 @@ scripts/
 | `test.timeoutSeconds` | 900 | テストの実行がこの秒数を超えたら止め、失敗として扱う (0 で無制限) |
 | `test.resultGlobs` | TRX / JUnit の典型パス | テスト結果ファイルの場所 |
 | `test.files` / `source.files` | | テストコード / 本番コードの場所 |
+| `deploy.targets` | (詳細設計で設定) | デプロイ先の一覧 (上から順に実行)。各要素は `name`、`command`、`smokeCommand` (公開後の確認)、`rollbackCommand`、`requiredEnv` (必要な環境変数名)。MCP で行う環境は `kind: "agent"` と `steps` (手順)、`rollbackSteps`、`requiredMcp` (使うツールの接頭辞) |
+| `deploy.timeoutSeconds` | 1800 | デプロイ・確認・切り戻しの各コマンドがこの秒数を超えたら止め、失敗として扱う (0 で無制限) |
+| `deploy.rollbackOnFailure` | true | 公開後の確認が失敗したら、自動で切り戻す |
+| `deploy.allowWithIssues` | false | true なら、検証に未解決の漏れや blocked のタスクがあってもデプロイする |
 | `stubPatterns` | TODO/FIXME/XXX のコメント、未実装例外など | スタブとして検出するパターン (正規表現) |
 | `idPrefixes` | REQ, NFR, ARC, SCR, TRN, API, ERR, EXT, DM, MOD, IF, VAL, EC, DBC, BR, TASK | ID として認識する接頭辞 |
 
@@ -289,8 +316,8 @@ scripts/
 | 仕組み | 使い方 |
 |--------|--------|
 | スキル | `.claude/skills/dev-flow/SKILL.md` はルーターだけを持ち、現在フェーズの手順書 (`phases/`) と必要な参照資料だけを読み込ませる |
-| SessionStart フック | `/clear` 後 (source=clear): 次フェーズの開始指示を注入する。実装・検証フェーズでは、そのセッションをオーケストレーターとして開始させる。compact 後: 手順書と決定ツリー (実装・検証なら状態と handoff) を読み直させる。起動時: 進行中のフェーズを知らせる (クラウドで、前のフェーズが終わって次が未開始なら、最初の短い一言で開始させる)。`ensure-pwsh.sh`: クラウドで pwsh がなければ入れてから上を実行する |
-| Stop フック | `devflow-state.ps1 run start` で登録したオーケストレーターのセッションでだけ動く。作業が残っていれば `decision: block` で応答を終えさせず、次の実装担当の起動や検証の続きを指示する。同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許す。タスク一覧が読めない (0 件) ときは止めずに終了を許し、人に知らせる |
+| SessionStart フック | `/clear` 後 (source=clear): 次フェーズの開始指示を注入する。実装・検証・デプロイフェーズでは、そのセッションをオーケストレーターとして開始させる。compact 後: 手順書と決定ツリー (実装・検証なら状態と handoff、デプロイなら `devflow-deploy.ps1 status` と deploy-log) を読み直させる。起動時: 進行中のフェーズを知らせる (クラウドで、前のフェーズが終わって次が未開始なら、最初の短い一言で開始させる)。`ensure-pwsh.sh`: クラウドで pwsh がなければ入れてから上を実行する |
+| Stop フック | `devflow-state.ps1 run start` で登録したオーケストレーターのセッションでだけ動く。作業が残っていれば `decision: block` で応答を終えさせず、次の実装担当の起動や検証・デプロイの続きを指示する。同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許す。タスク一覧が読めない (0 件) ときは止めずに終了を許し、人に知らせる |
 | PostToolUse フック | 入力の `agent_type` が `tdd-implementer` のときだけ動く。実装担当の transcript (`<セッションの transcript と同じ場所>/<session_id>/subagents/agent-<agent_id>.jsonl`) の最新の応答の `message.usage` (`input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`) を `contextWindowTokens` で割って使用率とし、閾値超えなら `additionalContext` で引き継ぎを指示する |
 | SubagentStart フック | `tdd-implementer` の起動時に `.devflow/implementer.json` (開始時刻・開始時の使用量) を作る |
 | SubagentStop フック | `tdd-implementer` が終えようとしたとき、閾値未満で実行可能なタスクが残っていれば `decision: block` で次のタスクへ進ませる。閾値超えなら、`handoff.md` が開始後に更新され、作業ツリーがクリーンになるまで終えさせない。同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許す |

@@ -67,6 +67,7 @@ docs/
     tasks/<TASK-ID>.md
   traceability.md              # 自動生成
   verification-report.md       # 検証フェーズの最終レポート
+  deployment-report.md         # デプロイフェーズの結果
 ```
 
 対象のシステムに不要なファイル (例: DB のない CLI の `db/`) は作らず、index.md に「不要 (理由)」と書く。

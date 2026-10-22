@@ -49,6 +49,7 @@
 | ビルド | |
 | 全テスト (結果ファイル出力) | <.devflow/config.json の test.command と同じ> |
 | 実行 | |
+| デプロイ | <`.devflow/config.json` の deploy.targets を参照。デプロイフェーズで `scripts/devflow-deploy.ps1` だけが実行する> |
 
 ## 7. コミット規約
 

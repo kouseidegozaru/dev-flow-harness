@@ -1,6 +1,6 @@
 ---
 name: dev-flow
-description: 企画・構想 → 要件定義 → 基本設計 → 詳細設計 → 実装 → 検証 の6フェーズで開発を進めるハーネス。.devflow/state.json から現在フェーズを判定し、該当フェーズの手順書を読み込んで実行する。ユーザーが開発フローの開始・再開・状況確認・フェーズのやり直しを求めたとき、または SessionStart フックが dev-flow の再開を指示したときに使う。
+description: 企画・構想 → 要件定義 → 基本設計 → 詳細設計 → 実装 → 検証 → デプロイ の7フェーズで開発を進めるハーネス。.devflow/state.json から現在フェーズを判定し、該当フェーズの手順書を読み込んで実行する。ユーザーが開発フローの開始・再開・状況確認・フェーズのやり直しを求めたとき、または SessionStart フックが dev-flow の再開を指示したときに使う。
 argument-hint: "[status | redo <phase>]"
 ---
 
@@ -37,7 +37,7 @@ pwsh -NoProfile -File scripts/devflow-state.ps1 phase
 |------|------|
 | なし | 現在フェーズを開始 (または途中から再開) する。下の表の手順書を読む |
 | `status` | `devflow-state.ps1 show` と `devflow-state.ps1 impl-status` の結果を要約して表示するだけで終わる |
-| `redo <phase>` | 指定フェーズからやり直す。影響 (以降のフェーズの成果物が古くなること) を説明し、ユーザーの明示的な承認を得てから `devflow-state.ps1 set-phase <phase>` を実行する (検証ラウンド数と追加タスクの記録は初期化される)。成果物は消さず、やり直すフェーズの手順で更新する。タスクの状態は、詳細設計の手順 (内容を変えたタスクだけ todo に戻す) で決める |
+| `redo <phase>` | 指定フェーズからやり直す。影響 (以降のフェーズの成果物が古くなること) を説明し、ユーザーの明示的な承認を得てから `devflow-state.ps1 set-phase <phase>` を実行する (検証ラウンド数と追加タスクの記録は初期化される。デプロイより前に戻すときは、デプロイの結果の記録も初期化される)。成果物は消さず、やり直すフェーズの手順で更新する。タスクの状態は、詳細設計の手順 (内容を変えたタスクだけ todo に戻す) で決める |
 
 ## 3. フェーズの手順書を読む
 
@@ -49,9 +49,10 @@ pwsh -NoProfile -File scripts/devflow-state.ps1 phase
 | detailed-design | 詳細設計 | [phases/04-detailed-design.md](phases/04-detailed-design.md) | ほぼなし |
 | implementation | 実装 | [phases/05-implementation.md](phases/05-implementation.md) | なし (オーケストレーター + 実装担当サブエージェント) |
 | verification | 検証 | [phases/06-verification.md](phases/06-verification.md) | なし (実装に続けて同じセッションで実行) |
-| done | 完了 | — | `docs/verification-report.md` の要点を伝える |
+| deployment | デプロイ | [phases/07-deployment.md](phases/07-deployment.md) | なし (検証に続けて同じセッションで実行。デプロイは `devflow-deploy.ps1` が行う) |
+| done | 完了 | — | `docs/verification-report.md` の要点と `docs/deployment-report.md` の結果を伝える |
 
-implementation / verification は、このセッションを **オーケストレーター** として実行する (ユーザーに質問しない)。
+implementation / verification / deployment は、このセッションを **オーケストレーター** として実行する (ユーザーに質問しない)。
 実装そのものは `tdd-implementer` サブエージェントが行い、このセッションはサブエージェントを起動して待つだけ (手順は 05 の手順書)。
 許可の確認で止まらないよう、ユーザーが `--permission-mode bypassPermissions` などで起動していない場合は、開始前にその旨を 1 回だけ伝えてから始める
 (クラウドのセッションでは起動し直せないので、権限モードを「自動」(auto) などの確認の少ないものにするよう伝える)。

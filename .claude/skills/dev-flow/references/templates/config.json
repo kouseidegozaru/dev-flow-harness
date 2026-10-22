@@ -15,5 +15,30 @@
   },
   "source": {
     "files": ["src/**"]
+  },
+  "deploy": {
+    "timeoutSeconds": 1800,
+    "rollbackOnFailure": true,
+    "allowWithIssues": false,
+    "targets": [
+      {
+        "name": "preview",
+        "kind": "agent",
+        "steps": [
+          "Supabase MCP の get_project_url と get_publishable_keys で URL と公開キーを読み出し、Vercel MCP の create_project_env で preview の NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY に設定する (既にあれば edit_project_env で更新する)",
+          "Vercel MCP の list_deployments で、今のコミットの preview デプロイ (Git 連携で push 時に作られる) が READY になるのを待つ",
+          "そのデプロイの URL を finish の -Note に書く"
+        ],
+        "requiredMcp": ["mcp__Vercel__", "mcp__Supabase__"],
+        "smokeCommand": "pwsh -NoProfile -File scripts/smoke.ps1 -Env preview"
+      },
+      {
+        "name": "production",
+        "command": "pwsh -NoProfile -File scripts/deploy.ps1 -Env production",
+        "smokeCommand": "pwsh -NoProfile -File scripts/smoke.ps1 -Env production",
+        "rollbackCommand": "pwsh -NoProfile -File scripts/rollback.ps1 -Env production",
+        "requiredEnv": ["DEPLOY_TOKEN"]
+      }
+    ]
   }
 }

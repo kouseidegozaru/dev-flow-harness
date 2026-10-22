@@ -1,10 +1,10 @@
 # Stop フック (オーケストレーター専用)
 #
-# 実装・検証フェーズのオーケストレーター (`devflow-state.ps1 run start` を実行したセッション) が、
+# 実装・検証・デプロイフェーズのオーケストレーター (`devflow-state.ps1 run start` を実行したセッション) が、
 # 作業を残したまま応答を終えないようにする。それ以外のセッションでは何もしない。
 # - 実装フェーズで実行可能なタスクが残っている: 次の実装担当を起動させる
 # - 実装フェーズで実行可能なタスクがない: 実装フェーズを完了して検証へ進ませる
-# - 検証フェーズ: 手順を最後まで進めさせる
+# - 検証フェーズ・デプロイフェーズ: 手順を最後まで進めさせる
 # - phase が done になったら止めない (残りが blocked だけでも検証へ進み、最終レポートで報告する)
 # - タスク一覧が読めない (0 件): 止めずに終了を許可し、人に知らせる
 # 同じ状態のまま 2 回止めても進捗がなければ、3 回目は終了を許可する。
@@ -29,7 +29,7 @@ if (-not $orch.sessionId) { $orch.sessionId = $sid }
 if ($orch.sessionId -ne $sid) { exit 0 }
 
 $state = Read-DevflowState $root
-if (-not $state -or $state.phase -notin @('implementation', 'verification')) {
+if (-not $state -or $state.phase -notin @('implementation', 'verification', 'deployment')) {
     $orch.active = $false
     Write-Utf8 $orchPath (($orch | ConvertTo-Json -Compress) + "`n")
     exit 0
@@ -64,5 +64,8 @@ if ($state.phase -eq 'implementation') {
         Block '実装フェーズのタスクが残っている。phases/05-implementation.md の手順どおり、次の tdd-implementer を起動すること。ユーザーには質問しない。'
     }
     Block '実行可能なタスクが残っていない (残りがあっても blocked とそれに依存するものだけ)。phases/05-implementation.md の「全タスク処理後」に従い、実装フェーズを完了して検証フェーズへ進むこと。'
+}
+if ($state.phase -eq 'deployment') {
+    Block 'デプロイフェーズが完了していない。phases/07-deployment.md の手順を最後まで実行すること (失敗しても、記録とレポートを書いてフェーズを完了する)。ユーザーには質問しない。'
 }
 Block '検証フェーズが完了していない。phases/06-verification.md の手順を最後まで実行すること。'
