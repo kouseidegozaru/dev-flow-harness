@@ -30,6 +30,6 @@ if ($count % 10 -ne 0) { exit 0 }
 
 $msg = ('[dev-flow] 実装担当のコンテキスト使用率 {0:N0}% (閾値 {1}%)。新しいタスクには着手しないこと。' -f $usage.Percent, $config.contextThresholdPercent) +
     '今のタスクを完了させるか、コミットできる区切り (Red / Green / Refactor のどれかのコミット) まで進めたら、' +
-    'tdd-implementer の手順「引き継いで終える」に従い、.devflow/handoff.md を更新してコミットし、報告して終了すること。次の実装担当が handoff.md から再開する。'
+    'tdd-implementer の手順「E. コンテキストが足りなくなった (非常口)」に従い、.devflow/handoff.md を更新してコミットし、報告して終了すること。次の実装担当が handoff.md から再開する。'
 Write-HookJson @{ hookSpecificOutput = @{ hookEventName = 'PostToolUse'; additionalContext = $msg } }
 exit 0

@@ -1,6 +1,6 @@
 # Stop フック (オーケストレーター専用)
 #
-# 実装・検証・デプロイフェーズのオーケストレーター (`devflow-state.ps1 run start` を実行したセッション) が、
+# 自動区間 (詳細設計・実装・検証・デプロイ) のオーケストレーター (`devflow-state.ps1 run start` を実行したセッション) が、
 # 作業を残したまま応答を終えないようにする。それ以外のセッションでは何もしない。
 # - 実装フェーズで実行可能なタスクが残っている: 次の実装担当を起動させる
 # - 実装フェーズで実行可能なタスクがない: 実装フェーズを完了して検証へ進ませる
@@ -29,7 +29,7 @@ if (-not $orch.sessionId) { $orch.sessionId = $sid }
 if ($orch.sessionId -ne $sid) { exit 0 }
 
 $state = Read-DevflowState $root
-if (-not $state -or $state.phase -notin @('implementation', 'verification', 'deployment')) {
+if (-not $state -or $state.phase -notin @('detailed-design', 'implementation', 'verification', 'deployment')) {
     $orch.active = $false
     Write-Utf8 $orchPath (($orch | ConvertTo-Json -Compress) + "`n")
     exit 0
@@ -51,6 +51,9 @@ function Block([string]$Reason) {
     exit 0
 }
 
+if ($state.phase -eq 'detailed-design') {
+    Block '詳細設計が完了していない。phases/04-detailed-design.md の手順どおり、detailed-designer を起動して設計を終え、出発前の確認から実装へ進むこと。ユーザーには質問しない (出発前の確認が NG のときは run stop してから報告する)。'
+}
 if ($state.phase -eq 'implementation') {
     $tasks = @(Read-TaskIndex $root $config)
     if ($tasks.Count -eq 0) {

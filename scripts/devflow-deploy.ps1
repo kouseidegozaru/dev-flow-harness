@@ -36,7 +36,9 @@
   - デプロイフェーズであること (plan を除く)
   - コードに未コミットの変更がないこと (.devflow/ と docs/ は数えない。記録を書くたびに変わるため)
   - 検証の結果: docs/verification-report.md の判定が「漏れなし」で、blocked のタスクがないこと
-    (deploy.allowWithIssues が true なら飛ばす。-Force では飛ばさない)
+    (deploy.allowWithIssues が true なら飛ばす。-Force では飛ばさない。本番のデプロイ先では飛ばせない)
+  - 本番のデプロイ先 (production: true、または名前が prod / production / 本番): 上に加えて、決定台帳に open の 処置-B (繰延べ) と
+    要回答 が 0 件であること。allowWithIssues の代わりに、最後の 1 回 (debrief) でユーザーが答えて台帳を解決にする
   - 前のデプロイ先 (ステージングなど) が、今と同じコードで成功していること (-Force で飛ばす)
   コマンドの出力は .devflow/logs/deploy-<name>-<段階>.log に書き、標準出力には失敗したときの末尾だけを出す。
 
@@ -229,6 +231,25 @@ function Get-GateIssues {
     return $ng
 }
 
+function Test-ProductionTarget($Target) {
+    $p = Get-Field $Target 'production'
+    if ($null -ne $p -and [string]$p -ne '') { return [bool]$p }
+    return ([string](Get-Field $Target 'name') -match '^(prod|production|本番)$')
+}
+
+function Get-ProductionGateIssues {
+    # 本番の前提 (allowWithIssues では飛ばせない): 検証の結果 + 台帳の open の 処置-B・要回答 が 0 件
+    $ng = @()
+    $rp = Join-DevflowPath $root 'docs/verification-report.md'
+    if (-not (Test-Path -LiteralPath $rp)) { $ng += 'docs/verification-report.md がありません (検証フェーズが終わっていない)' }
+    elseif ((Read-Utf8 $rp) -notmatch '判定:\s*漏れなし') { $ng += 'docs/verification-report.md の判定が「漏れなし」ではありません' }
+    $blocked = @(Read-TaskIndex $root $config | Where-Object { $_.Status -eq 'blocked' } | ForEach-Object { $_.Id })
+    if ($blocked.Count -gt 0) { $ng += "blocked のタスクがあります: $($blocked -join ', ')" }
+    $open = @(Read-Ledger $root | Where-Object { $_ -and $_.Kind -in @('処置-B', '要回答') -and $_.Status -eq 'open' } | ForEach-Object { "$($_.Dec) ($($_.Kind): $($_.Topic))" })
+    if ($open.Count -gt 0) { $ng += "決定台帳に未解決の繰延べ・要回答があります: $($open -join ', ') (最後の 1 回で答えて解決にする)" }
+    return $ng
+}
+
 function Get-CodeDirty { return @(Get-UncommittedChanges $root $config $codeSpec) }
 
 function Add-DeployLog([string]$Text) {
@@ -393,12 +414,14 @@ switch ($Command) {
                 Write-Output "   前回: $($r.status) ($($r.commit)、$same、$($r.at))"
             }
             $ng += @(Test-Target $t | ForEach-Object { "${n}: $_" })
+            if (Test-ProductionTarget $t) { $gateProd = @(Get-ProductionGateIssues) }
         }
         $dirty = @(Get-CodeDirty)
         if ($dirty.Count -gt 0) { $ng += "コードに未コミットの変更が $($dirty.Count) 件あります (コミットしたものだけをデプロイする)" }
-        $gate = @(Get-GateIssues)
+        $gate = @(Get-GateIssues) + @(if (Get-Variable gateProd -ErrorAction SilentlyContinue) { $gateProd })
+        $gate = @($gate | Where-Object { $_ } | Select-Object -Unique)
         if ($gate.Count -gt 0) {
-            Write-Output '検証の結果がデプロイの前提を満たしません (deploy.allowWithIssues が false):'
+            Write-Output '検証の結果・決定台帳がデプロイの前提を満たしません:'
             $gate | ForEach-Object { Write-Output "- $_" }
             exit 4
         }
@@ -425,6 +448,14 @@ switch ($Command) {
             if ($r -and $r.status -eq 'success' -and (Test-SameCode $r.commit)) {
                 Write-Output "skip: $n は今と同じコードでデプロイ済み ($($r.commit)、$($r.at))"
                 continue
+            }
+            if (Test-ProductionTarget $t) {
+                $pg = @(Get-ProductionGateIssues)
+                if ($pg.Count -gt 0) {
+                    Write-Output "デプロイしません: 本番のデプロイ先 $n の前提を満たしません:"
+                    $pg | ForEach-Object { Write-Output "- $_" }
+                    exit 4
+                }
             }
             $code = Invoke-Run $s $t
             if ($code -eq 5) { exit 5 }
