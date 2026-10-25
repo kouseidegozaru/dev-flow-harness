@@ -3,7 +3,7 @@
   dev-flow ハーネスを対象プロジェクトに導入する。
 
 .DESCRIPTION
-  コピーするもの: .claude/skills/dev-flow、.claude/agents の 5 エージェント、.claude/hooks、scripts/devflow-*
+  コピーするもの: .claude/skills/dev-flow、.claude/skills/contract-growth、.claude/agents の 5 エージェント、.claude/hooks、scripts/devflow-*
   .claude/settings.json は、既存のものがあればフックを追記し、statusLine は未設定のときだけ設定する。
   .gitignore に dev-flow の一時ファイルを追記する。
 
@@ -43,6 +43,7 @@ function Copy-Item2([string]$Rel) {
 }
 
 Copy-Item2 '.claude/skills/dev-flow'
+Copy-Item2 '.claude/skills/contract-growth'
 if (-not (Test-Path -LiteralPath (Join-Path $dst '.gitattributes'))) { Copy-Item2 '.gitattributes' } elseif (-not (Select-String -LiteralPath (Join-Path $dst '.gitattributes') -Pattern '*.sh' -SimpleMatch -Quiet)) { Add-Content -LiteralPath (Join-Path $dst '.gitattributes') -Value '*.sh text eol=lf'; Write-Output 'update: .gitattributes' }
 foreach ($a in 'spec-reviewer', 'design-reviewer', 'screen-designer', 'detailed-designer', 'tdd-implementer') { Copy-Item2 ".claude/agents/$a.md" }
 # 実装担当のツールの上書き (.devflow/config.json の implementer.tools。例: MCP のツールを足す)

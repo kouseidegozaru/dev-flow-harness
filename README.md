@@ -28,7 +28,7 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 ```
 
 - 導入の後、導入したファイルをコミットする (クラウドで使うなら push もする。導入の最後に手順が出る)
-- 対象プロジェクト (git リポジトリ) に `.claude/skills/dev-flow`、`.claude/agents/` の 5 エージェント、`.claude/hooks/`、`scripts/devflow-*` をコピーする
+- 対象プロジェクト (git リポジトリ) に `.claude/skills/dev-flow`、`.claude/skills/contract-growth`、`.claude/agents/` の 5 エージェント、`.claude/hooks/`、`scripts/devflow-*` をコピーする
 - `.claude/settings.json` に dev-flow のフックを追加する (既存の設定は残す。dev-flow のフックが導入済みなら最新の定義に置き換える)。
   ステータスラインは未設定のときだけ設定する
 - `.gitignore` に dev-flow の一時ファイルを、`.gitattributes` に `*.sh text eol=lf` を追加する
@@ -200,6 +200,22 @@ pwsh -NoProfile -File scripts/devflow-install.ps1 -Target <対象プロジェク
 **注意:** `bypassPermissions` は git・テスト・ファイル編集・デプロイを確認なしで行う。信頼できるリポジトリで、できればコンテナや専用の作業環境で実行すること。
 許可リストを細かく設定する場合は `acceptEdits` + `permissions.allow` (テストコマンド、`git`、`pwsh -NoProfile -File scripts/devflow-*`) でもよい。
 
+### 契約数を増やす (contract-growth)
+
+デプロイの後 (または dev-flow を使っていないサービスでも)、契約数を増やす改善を次のサイクルで進める。
+
+```
+/contract-growth [status | diagnose | ideas | run <EXP-ID> | review <EXP-ID>]
+```
+
+1. 目標と前提: 契約の定義・目標の数と期限・計測の方法・制約を、1 問ずつ推奨付きで決める (`docs/01-vision.md` とコードから分かることは聞かない)
+2. 計測と診断: 訪問 → 登録 → 有効化 → 契約 → 継続 の人数を、Stripe・DB・解析の MCP などから取り、コードを読んで摩擦を列挙し、「改善したら増える契約数」が一番大きい段階をボトルネックにする
+3. 施策: ボトルネックの施策を仮説の形で出し、ICE で並べてユーザーが選ぶ。ダークパターンや法令 (特定商取引法・景品表示法など) に触れる施策は出さない
+4. 実行: 判定の基準と必要な人数を先に決めてから入れる。dev-flow のプロジェクトでは `/dev-flow change` で入れる。メールの送信・料金の変更・広告は、毎回承認を得てから行う
+5. 判定: 判定日に、差が偶然の範囲を超えたかを確かめて採用か棄却を決め、学びを残して次の施策に戻る
+
+状態は `docs/growth/` (`baseline.md`・`experiments.md`・`experiments/EXP-*.md`・`log.md`) に残るので、コンテキストをクリアしても続きから始められる。
+
 ### 途中から再開する
 
 - **対話フェーズ**: `claude` を起動して `/dev-flow` (または何か一言。SessionStart フックが進行中のフェーズを知らせる)。`.devflow/decisions/<phase>.md` から続ける
@@ -269,6 +285,13 @@ pwsh -NoProfile -File scripts/devflow-commit.ps1 -Kind test -Scope TASK-003 -Mes
       traceability.md         # ID の書式・粒度・検証方法・テストへの埋め込み・trace の検査項目
       design-guidelines.md    # 画面デザインの指針
       templates/              # 各成果物のテンプレート
+  skills/contract-growth/
+    SKILL.md                  # 契約数を増やす改善サイクル (目標 → 計測と診断 → 施策 → 実行 → 判定)
+    references/
+      funnel.md               # ファネルの段階、ボトルネックの見積もり、数字の取り方、摩擦のチェックリスト、必要な人数と差の確かめ方
+      levers.md               # ICE の付け方と、段階ごとの施策の例
+      guardrails.md           # してはいけない施策 (ダークパターン) と法令の確認
+      templates/              # baseline.md・experiments.md・experiment.md
   agents/
     spec-reviewer.md          # 要件定義・基本設計を承認前に 1 回だけレビュー (次フェーズがユーザーに聞かないと決められない点を質問の形で)
     detailed-designer.md      # 詳細設計担当: 自動区間の最初に詳細設計を書く (create / reflect / amend / fix)。ユーザーに質問しない
